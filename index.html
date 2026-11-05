@@ -6,22 +6,21 @@
   <title>Gaana Pehchano — Diwali Night</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Mukta:wght@400;600;700&family=Yatra+One&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Mukta:wght@400;600;700;800&family=Yatra+One&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
-<body class="intro-mode">
-  <!-- fireworks layer -->
+<body class="cine-mode">
   <canvas id="fx" aria-hidden="true"></canvas>
 
-  <!-- ===== WELCOME INTRO ===== -->
-  <section id="intro" class="intro" aria-live="polite">
+  <!-- ===== CINEMA: intro story + ending ===== -->
+  <section id="cine" class="cine" aria-live="polite">
     <div class="toran" aria-hidden="true"></div>
-    <div id="introStage" class="intro-stage"></div>
-    <div class="intro-nav">
-      <div id="introDots" class="intro-dots"></div>
+    <div id="cineStage" class="cine-stage"></div>
+    <div class="cine-nav">
+      <div id="cineDots" class="cine-dots"></div>
       <div class="row">
-        <button id="introSkip" class="btn ghost small">Skip</button>
-        <button id="introNext" class="btn small">Aage ✨</button>
+        <button id="cineSkip" class="btn ghost small">Skip</button>
+        <button id="cineNext" class="btn small">Aage ✨</button>
       </div>
     </div>
   </section>
@@ -31,116 +30,80 @@
     <header class="topbar">
       <div class="brand">🪔 <span id="appName">Gaana Pehchano</span></div>
       <nav class="tabs">
-        <button class="tab active" data-nav="game">🎮 Game</button>
+        <button class="tab active" data-nav="game">🎶 Game</button>
         <button class="tab" data-nav="songs">🎵 Songs</button>
-        <button class="tab" data-nav="intro" title="Welcome dobara chalao">🎬</button>
+        <button class="tab" data-nav="intro" title="Kahani dobara chalao">🎬</button>
       </nav>
     </header>
 
     <main>
       <!-- ===== SETUP ===== -->
       <section id="screen-setup" class="screen">
-        <div class="setup-grid">
-          <div class="card">
-            <h2>👥 Kaun kaun khel raha hai?</h2>
-            <div class="row">
-              <input id="playerInput" type="text" placeholder="Naam likho (ya Team A)" maxlength="20">
-              <button id="addPlayerBtn" class="btn">+ Add</button>
+        <div class="card setup-card">
+          <h2>Party settings</h2>
+          <div class="setting">
+            <label>Gaane kahan se</label>
+            <div class="seg" id="sourceSeg">
+              <button data-v="local">📁 Meri files</button>
+              <button data-v="youtube">▶ YouTube</button>
             </div>
-            <div id="playerChips" class="chips"></div>
-            <p class="muted small">Kam se kam 2 players. Teams khelni ho toh team ka naam daal do.</p>
           </div>
-
-          <div class="card">
-            <h2>⚙️ Settings</h2>
-            <div class="setting">
-              <label>Gaane kahan se</label>
-              <div class="seg" id="sourceSeg">
-                <button data-v="local">📁 Meri files</button>
-                <button data-v="youtube">▶ YouTube</button>
-              </div>
+          <div class="setting">
+            <label>Kitne gaane</label>
+            <div class="seg" id="countSeg">
+              <button data-v="10">10</button>
+              <button data-v="15">15</button>
+              <button data-v="20">20</button>
+              <button data-v="0">Sab</button>
             </div>
-            <div class="setting">
-              <label>Clip length</label>
-              <div class="seg" id="clipSeg">
-                <button data-v="5">5 sec</button>
-                <button data-v="10">10 sec</button>
-              </div>
-            </div>
-            <div class="setting">
-              <label>Language</label>
-              <div class="seg" id="langSeg">
-                <button data-v="Mix">Mix</button>
-                <button data-v="Hindi">Hindi</button>
-                <button data-v="Punjabi">Punjabi</button>
-              </div>
-            </div>
-            <div class="setting">
-              <label>Rounds</label>
-              <div class="stepper">
-                <button id="roundsMinus" class="btn ghost small" aria-label="Kam karo">−</button>
-                <span id="roundsVal">5</span>
-                <button id="roundsPlus" class="btn ghost small" aria-label="Badhao">+</button>
-              </div>
-            </div>
-            <div class="setting">
-              <label>Replay allowed</label>
-              <div class="seg" id="replaySeg">
-                <button data-v="0">0</button>
-                <button data-v="1">1</button>
-                <button data-v="2">2</button>
-              </div>
-            </div>
-            <p id="songCountInfo" class="muted small"></p>
           </div>
+          <div class="setting">
+            <label>Tune kitni der bajegi</label>
+            <div class="seg" id="clipSeg">
+              <button data-v="5">5 sec</button>
+              <button data-v="10">10 sec</button>
+            </div>
+          </div>
+          <div class="setting">
+            <label>Language</label>
+            <div class="seg" id="langSeg">
+              <button data-v="Mix">Mix</button>
+              <button data-v="Hindi">Hindi</button>
+              <button data-v="Punjabi">Punjabi</button>
+            </div>
+          </div>
+          <div class="setting">
+            <label>Dobara sunna</label>
+            <div class="seg" id="replaySeg">
+              <button data-v="0">Nahi</button>
+              <button data-v="1">1 baar</button>
+              <button data-v="2">2 baar</button>
+            </div>
+          </div>
+          <p id="songCountInfo" class="muted small"></p>
         </div>
-        <button id="startBtn" class="btn big">🎆 Game shuru karo</button>
+        <button id="startBtn" class="btn big">🎶 Game shuru karo</button>
       </section>
 
       <!-- ===== GAME ===== -->
       <section id="screen-game" class="screen">
-        <div class="game-grid">
-          <div class="card stage">
-            <div class="stage-head">
-              <span id="roundLabel" class="pill"></span>
-              <button id="endGameBtn" class="btn ghost small">Game khatam</button>
-            </div>
-
-            <div id="wheelWrap" class="wheel-wrap">
-              <div class="pointer"></div>
-              <canvas id="wheel" width="440" height="440"></canvas>
-            </div>
-
-            <div id="turnLabel" class="turn-label"></div>
-
-            <div id="playerZone" class="player-zone hidden">
-              <div id="eq" class="eq"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
-              <div id="countdown" class="countdown"></div>
-              <div class="progress"><div id="progressBar"></div></div>
-            </div>
-
-            <div id="reveal" class="reveal hidden"></div>
-            <div id="controls" class="controls"></div>
+        <div class="deck">
+          <div class="deck-head">
+            <span id="songNo" class="pill"></span>
+            <button id="endGameBtn" class="btn ghost small">🎆 Party khatam</button>
           </div>
 
-          <aside class="card score">
-            <h2>🏆 Scoreboard</h2>
-            <ol id="scoreList"></ol>
-          </aside>
-        </div>
-      </section>
-
-      <!-- ===== RESULT ===== -->
-      <section id="screen-result" class="screen">
-        <div class="card result">
-          <div class="result-diyas" aria-hidden="true">🪔 🪔 🪔</div>
-          <h1 id="winnerTitle"></h1>
-          <p id="loserLine" class="muted"></p>
-          <ol id="finalList" class="final-list"></ol>
-          <div class="controls">
-            <button id="playAgainBtn" class="btn big">🔁 Phir se khelo</button>
-            <button id="backSetupBtn" class="btn ghost">⚙️ Setup</button>
+          <div class="turntable">
+            <div id="record" class="record"><div class="label"><span>🪔</span></div></div>
+            <div id="tonearm" class="tonearm"></div>
           </div>
+
+          <div id="countdown" class="countdown"></div>
+          <div class="progress"><div id="progressBar"></div></div>
+
+          <div id="status" class="status-line"></div>
+          <div id="reveal" class="reveal hidden"></div>
+          <div id="controls" class="controls"></div>
         </div>
       </section>
 
@@ -160,7 +123,7 @@
             </div>
           </div>
           <p class="muted small">
-            Bina ads aur bina internet chalega. Instrumental/karaoke mp3 files chuno — file ka naam
+            Bina ads aur bina internet chalega. Instrumental mp3 files chuno — file ka naam
             <b>"Gaana - Singer.mp3"</b> rakhoge toh naam aur singer khud bhar jayenge. Files sirf isi laptop ke browser mein save rehti hain, kahin upload nahi hoti.
           </p>
           <div class="table-wrap">
@@ -183,7 +146,7 @@
             </div>
           </div>
           <p class="muted small">
-            🔍 dabao → YouTube pe <b>instrumental</b> version dhundho → link paste karo. YouTube mode mein ad aaye toh app awaaz mute karke ad khatam hone ka wait karega.
+            🔍 dabao → YouTube pe <b>instrumental</b> version dhundho → link paste karo. Ad aaye toh app awaaz mute karke ad khatam hone ka wait karega.
             Hamesha ke liye: "Config copy karo" → <b>config.js</b> mein SONGS wala hissa replace.
           </p>
           <div class="table-wrap">
