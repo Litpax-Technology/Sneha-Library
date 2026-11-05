@@ -164,19 +164,18 @@ async function getLocalUrl(fid) {
 
 // ---------- State ----------
 const state = {
-  players: store.get("gp_players", []),
   settings: {
     source: CONFIG.DEFAULT_SOURCE || "local",
+    count: CONFIG.DEFAULT_COUNT,
     clip: CONFIG.DEFAULT_CLIP,
     lang: "Mix",
-    rounds: CONFIG.DEFAULT_ROUNDS,
     replay: CONFIG.REPLAY_LIMIT,
-    ...store.get("gp_settings", {})
+    ...store.get("gp_settings2", {})
   },
   game: null,
   view: "setup"
 };
-function saveSettings() { store.set("gp_settings", state.settings); }
+function saveSettings() { store.set("gp_settings2", state.settings); }
 
 function playableSongs() {
   const lang = state.settings.lang;
@@ -192,19 +191,18 @@ function showView(v) {
   state.view = v;
   $$(".screen").forEach((s) => s.classList.remove("active"));
   $("#screen-" + v).classList.add("active");
-  $$(".tab").forEach((t) => t.classList.toggle("active", (t.dataset.nav === "songs") === (v === "songs") && t.dataset.nav !== "intro"));
+  $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.nav !== "intro" && (t.dataset.nav === "songs") === (v === "songs")));
   if (v === "songs") { renderSongTable(); renderLocalTable(); }
   if (v === "setup") renderSetup();
   window.scrollTo(0, 0);
 }
 function goToGameArea() {
   if (!state.game) showView("setup");
-  else if (state.game.finished) showView("result");
   else { showView("game"); renderGame(); }
 }
 $$(".tab").forEach((t) => t.addEventListener("click", () => {
   const nav = t.dataset.nav;
-  if (nav === "intro") { stopAudio(); return startIntro(); }
+  if (nav === "intro") return startIntro();
   if (nav === "songs") {
     if (state.game && ["playing", "loading"].includes(state.game.phase)) { stopAudio(); state.game.phase = "played"; }
     return showView("songs");
@@ -212,17 +210,13 @@ $$(".tab").forEach((t) => t.addEventListener("click", () => {
   goToGameArea();
 }));
 
-// ---------- Setup screen ----------
+// ---------- Setup ----------
 function renderSetup() {
-  $("#playerChips").innerHTML = state.players.map((n, i) =>
-    `<span class="chip" style="background:${COLORS[i % COLORS.length]}">${esc(n)}<button data-rm="${i}" aria-label="${esc(n)} ko hatao">✕</button></span>`
-  ).join("") || `<span class="muted small">Abhi koi player nahi — naam likh ke Add dabao</span>`;
-
   setSeg("#sourceSeg", state.settings.source);
+  setSeg("#countSeg", state.settings.count);
   setSeg("#clipSeg", state.settings.clip);
   setSeg("#langSeg", state.settings.lang);
   setSeg("#replaySeg", state.settings.replay);
-  $("#roundsVal").textContent = state.settings.rounds;
 
   const pool = playableSongs();
   let info;
@@ -230,11 +224,10 @@ function renderSetup() {
     const h = localTracks.filter((t) => t.lang === "Hindi").length;
     const p = localTracks.filter((t) => t.lang === "Punjabi").length;
     info = localTracks.length
-      ? `📁 ${pool.length} instrumental files is setting mein ready (Hindi ${h}, Punjabi ${p}). Bina ads, bina internet.`
+      ? `📁 ${pool.length} instrumental tunes ready (Hindi ${h}, Punjabi ${p}). Bina ads, bina internet.`
       : `📁 Abhi koi file nahi. Songs tab mein instrumental mp3 files daalo, ya YouTube chuno.`;
   } else {
-    const all = songs.filter((s) => s.id);
-    info = `▶ ${pool.length} YouTube gaane ready (Hindi ${all.filter((s) => s.lang === "Hindi").length}, Punjabi ${all.filter((s) => s.lang === "Punjabi").length}). Ad aaya toh awaaz mute karke wait karega.`;
+    info = `▶ ${pool.length} YouTube gaane ready. Ad aaya toh awaaz mute karke wait karega.`;
   }
   $("#songCountInfo").textContent = info;
 }
@@ -251,58 +244,23 @@ function bindSeg(sel, key, isNum) {
   });
 }
 bindSeg("#sourceSeg", "source", false);
+bindSeg("#countSeg", "count", true);
 bindSeg("#clipSeg", "clip", true);
 bindSeg("#langSeg", "lang", false);
 bindSeg("#replaySeg", "replay", true);
-$("#roundsMinus").addEventListener("click", () => { state.settings.rounds = Math.max(1, state.settings.rounds - 1); saveSettings(); renderSetup(); });
-$("#roundsPlus").addEventListener("click", () => { state.settings.rounds = Math.min(30, state.settings.rounds + 1); saveSettings(); renderSetup(); });
-
-function addPlayer() {
-  const inp = $("#playerInput");
-  const name = inp.value.trim();
-  if (!name) return;
-  if (state.players.some((p) => p.toLowerCase() === name.toLowerCase())) return toast("Ye naam pehle se hai");
-  if (state.players.length >= 12) return toast("Max 12 players");
-  state.players.push(name);
-  store.set("gp_players", state.players);
-  inp.value = "";
-  inp.focus();
-  renderSetup();
-}
-$("#addPlayerBtn").addEventListener("click", addPlayer);
-$("#playerInput").addEventListener("keydown", (e) => { if (e.key === "Enter") addPlayer(); });
-$("#playerChips").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-rm]");
-  if (!b) return;
-  state.players.splice(+b.dataset.rm, 1);
-  store.set("gp_players", state.players);
-  renderSetup();
-});
 $("#startBtn").addEventListener("click", startGame);
 
-// ---------- Game ----------
+// ---------- Game (koi team nahi — bas tune bajao, sab milke pehchano) ----------
 function startGame() {
-  if (state.players.length < 2) return toast("Kam se kam 2 players chahiye");
-  if (!playableSongs().length) {
+  const pool = playableSongs();
+  if (!pool.length) {
     return toast(state.settings.source === "local"
       ? "Is language ki koi file nahi — Songs tab mein instrumental files daalo"
       : "Is language mein koi link wala gaana nahi — Songs tab mein link daalo", 3500);
   }
   if (state.settings.source === "youtube" && !ytReady) toast("YouTube player load ho raha hai… internet on rakho");
-  state.game = {
-    players: state.players.map((n, i) => ({ name: n, score: 0, correct: 0, color: COLORS[i % COLORS.length] })),
-    round: 1,
-    queue: state.players.map((_, i) => i),
-    current: null,
-    song: null,
-    played: new Set(),
-    replaysLeft: 0,
-    phase: "spin",
-    finished: false,
-    failCount: 0,
-    adWait: false
-  };
-  wheelRot = 0;
+  const total = state.settings.count ? Math.min(state.settings.count, pool.length) : pool.length;
+  state.game = { total, done: 0, song: null, phase: "ready", played: new Set(), replaysLeft: 0, failCount: 0, adWait: false };
   showView("game");
   renderGame();
 }
@@ -310,62 +268,59 @@ function startGame() {
 function renderGame() {
   const g = state.game;
   if (!g) return;
-  $("#roundLabel").textContent = `Round ${g.round} / ${state.settings.rounds}`;
+  const no = g.phase === "ready" && !g.song ? g.done + 1 : Math.max(1, g.phase === "reveal" ? g.done : g.done + 1);
+  $("#songNo").textContent = `Gaana ${Math.min(no, g.total)} / ${g.total}`;
 
-  const showWheel = ["spin", "spinning", "ready"].includes(g.phase);
-  $("#wheelWrap").classList.toggle("hidden", !showWheel);
-  $("#playerZone").classList.toggle("hidden", !["loading", "playing", "played"].includes(g.phase));
+  $("#record").classList.toggle("spin", g.phase === "playing");
+  $("#tonearm").classList.toggle("on", ["loading", "playing"].includes(g.phase));
   $("#reveal").classList.toggle("hidden", g.phase !== "reveal");
-  $("#eq").classList.toggle("on", g.phase === "playing");
-  if (showWheel) drawWheel();
+  $(".deck").classList.toggle("revealed", g.phase === "reveal");
 
-  const cur = g.current !== null ? g.players[g.current] : null;
-  const who = cur ? `<span class="who">${esc(cur.name)}</span>` : "";
-  const label = {
-    spin: "🎡 Wheel ghumao — dekhte hain kiski baari!",
-    spinning: "Ghoom raha hai…",
-    ready: `🎤 Baari: ${who}`,
-    loading: `🎤 ${who} — gaana load ho raha hai…` + (g.adWait ? `<span class="ad">📺 YouTube ad chal raha hai, awaaz band hai — bas khatam hone wala hai…</span>` : ""),
-    playing: `🎧 ${who}, dhyan se suno!`,
-    played: `🤔 ${who}, batao kaunsa gaana tha?`,
-    reveal: `${who} ka jawab sahi tha?`
+  const cd = $("#countdown");
+  if (g.phase === "ready") cd.textContent = "🎶";
+  if (g.phase === "loading") cd.textContent = g.adWait ? "📺" : "…";
+  if (g.phase === "played") cd.textContent = "⏸";
+  if (g.phase === "reveal") cd.textContent = "✨";
+  if (g.phase === "ready" || g.phase === "loading") $("#progressBar").style.width = "0";
+
+  $("#status").innerHTML = {
+    ready: g.done === 0 ? "Sab taiyaar? Kaan khol ke suniye 👂" : "Agli tune ke liye taiyaar? 👂",
+    loading: "Tune lag rahi hai…" + (g.adWait ? `<span class="ad">📺 YouTube ad chal raha hai, awaaz band hai — bas aa raha hai…</span>` : ""),
+    playing: "🎧 Kaunsa gaana hai?",
+    played: "🤔 Pehchana? Jaldi bolo!",
+    reveal: ""
   }[g.phase] || "";
-  $("#turnLabel").innerHTML = label;
-
-  if (g.phase === "loading") { $("#countdown").textContent = g.adWait ? "📺" : "…"; $("#progressBar").style.width = "0"; }
-  if (g.phase === "played") { $("#countdown").textContent = "⏸"; }
 
   if (g.phase === "reveal" && g.song) {
     const s = g.song;
+    const quips = PARTY.QUIPS || [];
+    const q = quips.length ? fillNames(quips[Math.floor(Math.random() * quips.length)]) : "";
     $("#reveal").innerHTML = `
       <div class="song-title">🎶 ${esc(s.title)}</div>
       <div class="song-meta">${esc(s.singer)}${s.movie ? " · " + esc(s.movie) : ""}</div>
       <span class="tag">${esc(s.lang)}</span>
-      ${hasStart(s.startUsed) ? `<div class="muted small" style="margin-top:8px">Clip ${fmtTime(s.startUsed)} se bajaya tha</div>` : ""}`;
+      ${q ? `<div class="quip">${esc(q)}</div>` : ""}`;
   }
   renderControls();
-  renderScores();
 }
 
 function renderControls() {
   const g = state.game;
   const B = (id, text, cls = "", dis = false) => `<button class="btn ${cls}" data-act="${id}" ${dis ? "disabled" : ""}>${text}</button>`;
+  const last = g.done >= g.total;
   let html = "";
   switch (g.phase) {
-    case "spin": html = B("spin", "🎡 Spin karo"); break;
-    case "spinning": html = B("spin", "🎡 Ghoom raha hai…", "", true); break;
-    case "ready": html = B("play", "▶️ Gaana bajao"); break;
-    case "loading": html = B("skip", "⏭ Doosra gaana", "ghost"); break;
+    case "ready": html = B("play", "▶ Tune bajao", "hero"); break;
+    case "loading": html = B("skip", "⏭ Doosri tune", "ghost"); break;
     case "playing": html = B("stop", "⏹ Rok do", "ghost"); break;
     case "played":
-      html = B("replay", `🔁 Dobara (${g.replaysLeft})`, "ghost", g.replaysLeft <= 0) +
-             B("reveal", "👀 Answer dikhao") +
-             B("skip", "⏭ Doosra gaana", "ghost");
+      html = B("replay", `🔁 Dobara suno (${g.replaysLeft})`, "ghost", g.replaysLeft <= 0) +
+             B("reveal", "👀 Answer dikhao", "hero") +
+             B("skip", "⏭ Skip", "ghost");
       break;
     case "reveal":
-      html = B("correct", `✅ Sahi +${CONFIG.POINTS_CORRECT}`, "green") +
-             B("wrong", "❌ Galat", "red") +
-             B("more", "🔊 Aage suno", "ghost");
+      html = (last ? B("finish", "🎆 Party khatam karo", "hero") : B("next", "▶ Agla gaana", "hero")) +
+             B("more", "🔊 Thoda aur suno", "ghost");
       break;
   }
   $("#controls").innerHTML = html;
@@ -376,179 +331,26 @@ $("#controls").addEventListener("click", (e) => {
   if (!b || b.disabled) return;
   const g = state.game;
   switch (b.dataset.act) {
-    case "spin": spin(); break;
-    case "play": g.failCount = 0; playNewSong(); break;
+    case "play":
+    case "next": g.failCount = 0; stopAudio(); playNewSong(); break;
     case "skip": stopAudio(); g.failCount = 0; playNewSong(); break;
     case "stop": endClip(); break;
     case "replay": if (g.replaysLeft > 0) { g.replaysLeft--; startClip(true); } break;
-    case "reveal": stopAudio(); g.phase = "reveal"; renderGame(); break;
+    case "reveal":
+      stopAudio();
+      g.done++;
+      g.phase = "reveal";
+      renderGame();
+      { const r = $("#reveal").getBoundingClientRect(); burst(r.left + r.width / 2, r.top + 10, 70); }
+      break;
     case "more": playMore(); break;
-    case "correct": markAnswer(true); break;
-    case "wrong": markAnswer(false); break;
+    case "finish": startOutro(); break;
   }
 });
 
-function renderScores() {
-  const g = state.game;
-  const order = g.players.map((p, i) => ({ ...p, i })).sort((a, b) => b.score - a.score);
-  $("#scoreList").innerHTML = order.map((p) => {
-    const done = !g.queue.includes(p.i);
-    return `<li class="${p.i === g.current && g.phase !== "spin" ? "current" : ""}">
-      <span class="dot" style="background:${p.color}"></span>
-      <span class="name">${esc(p.name)}</span>
-      ${done ? `<span class="done">✓ khel liya</span>` : ""}
-      <span class="pts">${p.score}</span></li>`;
-  }).join("");
-}
-
-function markAnswer(ok) {
-  const g = state.game;
-  stopAudio();
-  const p = g.players[g.current];
-  if (ok) {
-    p.score += CONFIG.POINTS_CORRECT;
-    p.correct++;
-    toast(`🎉 Shabaash ${p.name}!`);
-    const r = $("#reveal").getBoundingClientRect();
-    burst(r.left + r.width / 2, r.top + 20, 90);
-  } else {
-    toast(`💃 ${p.name}, rule yaad hai na? 10 second naach ke dikhao!`, 3500);
-  }
-  nextTurn();
-}
-
-function nextTurn() {
-  const g = state.game;
-  g.queue = g.queue.filter((i) => i !== g.current);
-  g.song = null;
-  if (!g.queue.length) {
-    g.round++;
-    if (g.round > state.settings.rounds) return finishGame();
-    g.queue = g.players.map((_, i) => i);
-    toast(`🪔 Round ${g.round} shuru!`);
-  }
-  g.current = null;
-  g.phase = "spin";
-  renderGame();
-}
-
-$("#endGameBtn").addEventListener("click", () => { if (confirm("Game abhi khatam karna hai?")) finishGame(); });
-
-function finishGame() {
-  const g = state.game;
-  stopAudio();
-  g.finished = true;
-  const order = [...g.players].sort((a, b) => b.score - a.score);
-  const top = order[0].score;
-  const low = order[order.length - 1].score;
-  const winners = order.filter((p) => p.score === top);
-  const losers = order.filter((p) => p.score === low);
-  $("#winnerTitle").textContent = top === 0
-    ? "😅 Kisi ne ek bhi nahi pehchana!"
-    : winners.length > 1 ? `🤝 Tie: ${winners.map((w) => w.name).join(" & ")}` : `🏆 ${winners[0].name} jeet gaya!`;
-  $("#loserLine").textContent = top !== low
-    ? `🧨 Aur rule ke hisaab se… ${losers.map((l) => l.name).join(" & ")} patakhon ka kachra uthayenge!`
-    : "";
-  $("#finalList").innerHTML = order.map((p, i) =>
-    `<li><span>${i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1 + "."} ${esc(p.name)}</span><span>${p.score}</span></li>`).join("");
-  showView("result");
-  celebrate(6);
-}
-$("#playAgainBtn").addEventListener("click", startGame);
-$("#backSetupBtn").addEventListener("click", () => { state.game = null; showView("setup"); });
-
-// ---------- Wheel ----------
-let wheelRot = 0;
-function drawWheel() {
-  const g = state.game;
-  const c = $("#wheel");
-  const ctx = c.getContext("2d");
-  const W = c.width, C = W / 2, R = C - 8;
-  ctx.clearRect(0, 0, W, W);
-  const idx = g.queue;
-  const n = idx.length;
-  if (!n) return;
-  const seg = (2 * Math.PI) / n;
-
-  for (let k = 0; k < n; k++) {
-    const p = g.players[idx[k]];
-    const a0 = wheelRot + k * seg;
-    ctx.beginPath(); ctx.moveTo(C, C); ctx.arc(C, C, R, a0, a0 + seg); ctx.closePath();
-    ctx.fillStyle = p.color; ctx.fill();
-    ctx.strokeStyle = "rgba(255,214,150,0.55)"; ctx.lineWidth = 2; ctx.stroke();
-
-    ctx.save();
-    ctx.translate(C, C);
-    const mid = (((a0 + seg / 2) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-    const flip = mid > Math.PI / 2 && mid < Math.PI * 1.5;
-    ctx.rotate(a0 + seg / 2 + (flip ? Math.PI : 0));
-    ctx.textAlign = flip ? "left" : "right";
-    ctx.fillStyle = "#fff";
-    ctx.font = `700 ${n > 8 ? 20 : 25}px "Mukta", sans-serif`;
-    ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 4;
-    const name = p.name.length > 12 ? p.name.slice(0, 11) + "…" : p.name;
-    ctx.fillText(name, flip ? -(R - 18) : R - 18, 9);
-    ctx.restore();
-  }
-  for (let r = R * 0.34; r < R - 4; r += 5) {          // grooves
-    ctx.beginPath(); ctx.arc(C, C, r, 0, 2 * Math.PI);
-    ctx.strokeStyle = "rgba(0,0,0,0.09)"; ctx.lineWidth = 1; ctx.stroke();
-  }
-  const sheen = ctx.createLinearGradient(0, 0, W, W);  // fixed light
-  sheen.addColorStop(0, "rgba(255,255,255,0.22)");
-  sheen.addColorStop(0.45, "rgba(255,255,255,0)");
-  sheen.addColorStop(0.55, "rgba(0,0,0,0)");
-  sheen.addColorStop(1, "rgba(0,0,0,0.30)");
-  ctx.beginPath(); ctx.arc(C, C, R, 0, 2 * Math.PI); ctx.fillStyle = sheen; ctx.fill();
-  ctx.beginPath(); ctx.arc(C, C, R, 0, 2 * Math.PI); ctx.strokeStyle = "#12061a"; ctx.lineWidth = 8; ctx.stroke();
-
-  // center: diya label
-  const LR = R * 0.27;
-  ctx.beginPath(); ctx.arc(C, C, LR, 0, 2 * Math.PI); ctx.fillStyle = "#fff3dc"; ctx.fill();
-  ctx.beginPath(); ctx.arc(C, C, LR - 7, 0, 2 * Math.PI); ctx.strokeStyle = "#ffc24b"; ctx.lineWidth = 3; ctx.stroke();
-  ctx.save();
-  ctx.translate(C, C);
-  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.shadowBlur = 0;
-  ctx.font = `${Math.round(LR * 0.7)}px sans-serif`;
-  ctx.fillText("🪔", 0, -LR * 0.16);
-  ctx.fillStyle = "#ff3d7f";
-  ctx.font = `${Math.round(LR * 0.24)}px "Yatra One", sans-serif`;
-  ctx.fillText("Gaana Pehchano", 0, LR * 0.52);
-  ctx.restore();
-  ctx.textBaseline = "alphabetic";
-}
-
-function spin() {
-  const g = state.game;
-  if (g.phase !== "spin") return;
-  g.phase = "spinning";
-  renderGame();
-  const n = g.queue.length;
-  const seg = (2 * Math.PI) / n;
-  const w = Math.floor(Math.random() * n);
-  const jitter = (Math.random() - 0.5) * seg * 0.6;
-  const target = -Math.PI / 2 - (w + 0.5) * seg + jitter;
-  const TWO = 2 * Math.PI;
-  const from = ((wheelRot % TWO) + TWO) % TWO;
-  let to = target;
-  while (to < from + TWO * 5) to += TWO;
-  const dur = REDUCED ? 300 : 3800, t0 = performance.now();
-  function frame(t) {
-    const p = Math.min(1, (t - t0) / dur);
-    wheelRot = from + (to - from) * (1 - Math.pow(1 - p, 4));
-    drawWheel();
-    if (p < 1) requestAnimationFrame(frame);
-    else {
-      g.current = g.queue[w];
-      g.phase = "ready";
-      renderGame();
-      const r = $("#wheelWrap").getBoundingClientRect();
-      burst(r.left + r.width / 2, r.top + 10, 40);
-    }
-  }
-  requestAnimationFrame(frame);
-}
-
+$("#endGameBtn").addEventListener("click", () => {
+  if (confirm("Party ka game khatam karke ending dikhayein?")) startOutro();
+});
 // ---------- Playback (local files + YouTube) ----------
 let player = null;
 let ytReady = false;
@@ -1098,97 +900,255 @@ function fxLoop(t) {
   else { fx.running = false; ctx.clearRect(0, 0, innerWidth, innerHeight); }
 }
 
-// ---------- Welcome intro ----------
-let introIdx = 0;
-let introTimers = [];
-const HOST_FACES = ["🙋🏻‍♂️", "🙋🏻‍♀️"];
-function hostName(i) { return (PARTY.HOSTS && PARTY.HOSTS[i]) || ""; }
-function fillNames(s) { return String(s).replace(/\{H1\}/g, hostName(0)).replace(/\{H2\}/g, hostName(1)); }
 
-function startIntro() {
-  document.body.classList.add("intro-mode");
-  introIdx = 0;
-  fx.auto = true;
-  startFx();
-  $("#introDots").innerHTML = PARTY.SCENES.map(() => "<i></i>").join("");
-  renderScene();
+// ---------- Cinema: intro story + ending ----------
+const cine = { mode: "intro", scenes: [], idx: 0, timers: [], line: 0, lines: [], typeTimer: null, lineDone: null };
+function hostName(i) { return (PARTY.HOSTS && PARTY.HOSTS[i]) || ""; }
+function fillNames(s) {
+  return String(s ?? "")
+    .replace(/\{H1\}/g, hostName(0))
+    .replace(/\{H2\}/g, hostName(1))
+    .replace(/\{SONGS\}/g, state.game ? state.game.done : 0);
 }
-function endIntro() {
-  introTimers.forEach(clearTimeout);
-  introTimers = [];
+function later(ms, fn) { cine.timers.push(setTimeout(fn, REDUCED ? Math.min(ms, 400) : ms)); }
+function cineClear() {
+  cine.timers.forEach(clearTimeout);
+  cine.timers = [];
+  clearInterval(cine.typeTimer);
+  cine.lineDone = null;
+}
+
+function openCine(mode, scenes) {
+  stopAudio();
+  cineClear();
+  document.body.classList.add("cine-mode");
+  cine.mode = mode;
+  cine.scenes = scenes;
+  cine.idx = 0;
+  $("#cineDots").innerHTML = scenes.map(() => "<i></i>").join("");
+  window.scrollTo(0, 0);
+  renderCine();
+}
+function startIntro() { openCine("intro", PARTY.STORY); }
+function startOutro() { openCine("outro", [{ type: "report" }, { type: "wish" }]); }
+function closeCine() {
+  cineClear();
   fx.auto = false;
-  document.body.classList.remove("intro-mode");
-  goToGameArea();
+  $("#cine").classList.remove("letterbox");
+  document.body.classList.remove("cine-mode");
+  if (cine.mode === "intro") goToGameArea();
+  else { state.game = null; showView("setup"); }
 }
 function nextScene() {
-  if (introIdx >= PARTY.SCENES.length - 1) return endIntro();
-  introIdx++;
-  renderScene();
+  if (cine.idx >= cine.scenes.length - 1) return closeCine();
+  cine.idx++;
+  renderCine();
 }
-function renderScene() {
-  introTimers.forEach(clearTimeout);
-  introTimers = [];
-  const sc = PARTY.SCENES[introIdx];
-  const last = introIdx === PARTY.SCENES.length - 1;
-  let html = "";
-  let dur = 5000;
+// "Aage" button: chal rahi dialogue line ko poora karo / agli line / agla scene
+function cineAdvance() {
+  if (cine.lineDone) return cine.lineDone();
+  nextScene();
+}
 
-  if (sc.type === "diya") {
-    html = `<div class="diya-row">${[0, 1, 2, 3, 4].map((i) => `<div class="diya" style="--d:${0.3 + i * 0.35}s"><i class="flame"></i></div>`).join("")}</div>
-      <h1>${esc(fillNames(sc.title))}</h1><p class="sub">${esc(fillNames(sc.sub || ""))}</p>`;
-    dur = 5000;
-  } else if (sc.type === "hosts") {
-    html = `<div class="hosts">${[0, 1].map((i) => `<div class="host"><div class="face"><span>${HOST_FACES[i]}</span></div></div>`).join("")}</div>
-      <h1>${esc(fillNames(sc.title))}</h1><p class="sub">${esc(fillNames(sc.sub || ""))}</p>`;
-    dur = 5500;
-    introTimers.push(setTimeout(() => celebrate(3), 600));
-  } else if (sc.type === "chat") {
-    const lines = sc.lines || [];
-    html = `<p class="scene-title">Hosts ki secret baatein 🤫</p><div class="chat">${lines.map((l, i) => {
-      const who = l[0] === "H2" ? 1 : 0;
-      return `<div class="bubble h${who + 1}" style="animation-delay:${0.4 + i * 1.5}s"><b>${esc(hostName(who))}</b>${esc(fillNames(l[1]))}</div>`;
-    }).join("")}</div>`;
-    dur = 2800 + lines.length * 1500;
-  } else if (sc.type === "rules") {
-    const items = sc.items || [];
-    html = `<p class="scene-title">${esc(fillNames(sc.title || ""))}</p><ul class="rules">${items.map((r, i) =>
-      `<li style="animation-delay:${0.3 + i * 1.1}s"><span class="e">${esc(r[0])}</span><span>${esc(fillNames(r[1]))}</span></li>`).join("")}</ul>`;
-    dur = 3200 + items.length * 1100;
-  } else if (sc.type === "go") {
-    html = `<h1>${esc(fillNames(sc.title))}</h1><p class="sub">${esc(fillNames(sc.sub || ""))}</p>
-      <button class="btn big go-btn" id="goBtn">🎮 Game pe chalo</button>`;
-    dur = 0;
-    introTimers.push(setTimeout(() => celebrate(5), 300));
+function castHtml() {
+  const faces = PARTY.FACES || ["🧑", "👩"];
+  return `<div class="cast">${[0, 1].map((i) => `
+    <div class="actor a${i + 1}" id="actor${i}">
+      <div class="bubble-slot"><div class="bubble" id="bubble${i}"></div></div>
+      <div class="face"><span id="face${i}">${faces[i]}</span></div>
+      <div class="tag">${esc(hostName(i))}</div>
+    </div>`).join("")}</div>`;
+}
+
+function renderCine() {
+  cineClear();
+  const sc = cine.scenes[cine.idx];
+  const last = cine.idx === cine.scenes.length - 1;
+  const stage = $("#cineStage");
+  $("#cine").classList.toggle("letterbox", sc.type === "title");
+  fx.auto = sc.type === "wish";
+  if (fx.auto) startFx();
+  let html = "";
+
+  switch (sc.type) {
+    case "title":
+      html = `<div class="scene title-card"><div class="moon">🌙</div><h1>${esc(fillNames(sc.title))}</h1><p class="sub">${esc(fillNames(sc.sub))}</p></div>`;
+      later(5200, nextScene);
+      break;
+
+    case "talk":
+      html = `<div class="scene story${sc.shake ? " shake" : ""}">
+        <div class="caption">${esc(fillNames(sc.caption))}</div>
+        <div class="props">${esc(sc.props || "")}</div>
+        ${castHtml()}</div>`;
+      later(900, () => playLines(sc.lines || []));
+      break;
+
+    case "checklist": {
+      const items = sc.items || [];
+      html = `<div class="scene story">
+        <div class="caption">${esc(fillNames(sc.caption))}</div>
+        <ul class="checklist">${items.map((it, i) =>
+          `<li class="${it[1] ? "ok" : "no"}" style="animation-delay:${0.5 + i * 0.6}s"><span class="box">${it[1] ? "✅" : "❌"}</span>${esc(fillNames(it[0]))}</li>`).join("")}</ul>
+        ${castHtml()}</div>`;
+      later(900 + items.length * 600, () => playLines(sc.lines || []));
+      break;
+    }
+
+    case "welcome":
+      html = `<div class="scene welcome">
+        <div class="hosts">${[0, 1].map((i) => `<div class="actor a${i + 1}"><div class="face"><span>🙏</span></div><div class="tag">${esc(hostName(i))}</div></div>`).join("")}</div>
+        <h1>${esc(fillNames(sc.title))}</h1>
+        <p class="sub">${esc(fillNames(sc.sub))}</p>
+        <div class="diya-row">${[0, 1, 2, 3, 4].map((i) => `<div class="diya" style="--d:${0.6 + i * 0.3}s"><i class="flame"></i></div>`).join("")}</div>
+      </div>`;
+      later(500, () => celebrate(4));
+      later(7000, nextScene);
+      break;
+
+    case "rules": {
+      const items = sc.items || [];
+      html = `<div class="scene"><p class="scene-title">${esc(fillNames(sc.title))}</p><ul class="rules">${items.map((r, i) =>
+        `<li style="animation-delay:${0.3 + i * 1.1}s"><span class="e">${esc(r[0])}</span><span>${esc(fillNames(r[1]))}</span></li>`).join("")}</ul></div>`;
+      later(3400 + items.length * 1100, nextScene);
+      break;
+    }
+
+    case "go":
+      html = `<div class="scene"><h1>${esc(fillNames(sc.title))}</h1><p class="sub">${esc(fillNames(sc.sub))}</p>
+        <button class="btn big go-btn" id="goBtn">🎶 Game shuru karo</button></div>`;
+      later(300, () => celebrate(5));
+      break;
+
+    case "report": {
+      const o = PARTY.OUTRO || {};
+      const today = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+      html = `<div class="scene"><div class="report">
+        <div class="report-head"><h2>📊 ${esc(fillNames(o.REPORT_TITLE || "Diwali Night Report"))}</h2><span>${esc(today)}</span></div>
+        <div class="kpis">${(o.KPIS || []).map((k, i) =>
+          `<div class="kpi" style="animation-delay:${0.4 + i * 0.5}s"><div class="k-e">${esc(k[0])}</div><div class="k-v" data-count="${esc(fillNames(k[2]))}">${esc(fillNames(k[2]))}</div><div class="k-l">${esc(fillNames(k[1]))}</div></div>`).join("")}</div>
+        <p class="report-note" style="animation-delay:${0.6 + (o.KPIS || []).length * 0.5}s">${esc(fillNames(o.REPORT_NOTE || ""))}</p>
+      </div></div>`;
+      later(50, countUpKpis);
+      later(8000, nextScene);
+      break;
+    }
+
+    case "wish": {
+      const o = PARTY.OUTRO || {};
+      html = `<div class="scene wish">
+        <div class="diya-row" style="margin:0 0 26px">${[0, 1, 2, 3, 4].map((i) => `<div class="diya" style="--d:${0.2 + i * 0.25}s"><i class="flame"></i></div>`).join("")}</div>
+        <h1>${esc(fillNames(o.WISH || "Happy Diwali!"))}</h1>
+        <p class="sub">${esc(fillNames(o.MESSAGE || ""))}</p>
+        <div class="again"><button class="btn ghost" id="againBtn">🔁 Phir se khelo</button></div>
+      </div>`;
+      later(200, () => celebrate(6));
+      break;
+    }
   }
 
-  $("#introStage").innerHTML = `<div class="scene">${html}</div>`;
-  $$("#introDots i").forEach((d, i) => d.classList.toggle("on", i === introIdx));
-  $("#introNext").textContent = last ? "Game pe chalo 🎮" : "Aage ✨";
-  $("#introSkip").classList.toggle("hidden", last);
+  stage.innerHTML = html;
+  stage.scrollTop = 0;
+  $$("#cineDots i").forEach((d, i) => d.classList.toggle("on", i === cine.idx));
+  $("#cineNext").textContent = last ? (cine.mode === "intro" ? "Game pe chalo 🎶" : "Band karo") : "Aage ✨";
+  $("#cineSkip").classList.toggle("hidden", last);
   const go = $("#goBtn");
-  if (go) go.addEventListener("click", endIntro);
-  if (dur && !REDUCED) introTimers.push(setTimeout(nextScene, dur));
+  if (go) go.addEventListener("click", closeCine);
+  const again = $("#againBtn");
+  if (again) again.addEventListener("click", () => { closeCine(); startGame(); });
 }
-$("#introNext").addEventListener("click", nextScene);
-$("#introSkip").addEventListener("click", endIntro);
+
+// Dialogue: ek-ek line, typewriter style, bolne wale ka chehra badalta hai
+function playLines(lines) {
+  cine.lines = lines;
+  cine.line = 0;
+  if (!lines.length) return later(1500, nextScene);
+  speak();
+}
+function speak() {
+  const l = cine.lines[cine.line];
+  if (!l) return;
+  const who = l[0] === "H2" ? 1 : 0;
+  const other = 1 - who;
+  const text = fillNames(l[2]);
+  const actor = $("#actor" + who), otherActor = $("#actor" + other);
+  if (!actor) return;
+  actor.classList.add("talking"); actor.classList.remove("quiet");
+  otherActor.classList.remove("talking"); otherActor.classList.add("quiet");
+  $("#bubble" + other).classList.remove("show");
+  $("#face" + who).innerHTML = `<span class="pop">${esc(l[1] || "")}</span>`;
+  const bubble = $("#bubble" + who);
+  bubble.textContent = "";
+  bubble.classList.add("show");
+
+  const next = () => {
+    cine.lineDone = null;
+    cine.timers.forEach(clearTimeout);
+    cine.timers = [];
+    cine.line++;
+    if (cine.line < cine.lines.length) speak();
+    else later(1400, nextScene);
+  };
+  const typed = () => {                       // line poori dikh gayi
+    clearInterval(cine.typeTimer);
+    bubble.textContent = text;
+    actor.classList.remove("talking");
+    cine.lineDone = next;                     // ab "Aage" = agli line
+    later(1100 + text.length * 30, next);
+  };
+  cine.lineDone = typed;                      // typing ke beech "Aage" = line turant poori
+  if (REDUCED) return typed();
+  let i = 0;
+  clearInterval(cine.typeTimer);
+  cine.typeTimer = setInterval(() => {
+    i++;
+    bubble.textContent = text.slice(0, i);
+    if (i >= text.length) typed();
+  }, 32);
+}
+
+function countUpKpis() {
+  $$(".kpi .k-v").forEach((el, idx) => {
+    const raw = el.dataset.count;
+    const n = parseInt(raw, 10);
+    if (isNaN(n) || String(n) !== raw.trim()) return;
+    el.textContent = "0";
+    later(400 + idx * 500, () => {
+      const t0 = performance.now(), dur = 900;
+      const tick = (t) => {
+        const p = Math.min(1, (t - t0) / dur);
+        el.textContent = Math.round(n * (1 - Math.pow(1 - p, 3)));
+        if (p < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+  });
+}
+
+$("#cineNext").addEventListener("click", () => {
+  if (cine.idx === cine.scenes.length - 1) return closeCine();
+  cineAdvance();
+});
+$("#cineSkip").addEventListener("click", closeCine);
 document.addEventListener("keydown", (e) => {
-  if (!document.body.classList.contains("intro-mode")) return;
-  if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); nextScene(); }
-  if (e.key === "Escape") endIntro();
+  if (!document.body.classList.contains("cine-mode")) return;
+  if (e.key === "ArrowRight" || e.key === " " || e.key === "Enter") {
+    e.preventDefault();
+    if (cine.idx === cine.scenes.length - 1) return closeCine();
+    cineAdvance();
+  }
+  if (e.key === "Escape") closeCine();
 });
 
 // ---------- Init ----------
 $("#appName").textContent = CONFIG.APP_NAME;
 if (location.protocol === "file:") {
-  setTimeout(() => toast("⚠️ File seedha khologe toh YouTube nahi chalega — GitHub Pages ya local server se kholo", 6000), 800);
+  setTimeout(() => toast("⚠️ YouTube mode ke liye app ko GitHub Pages ya local server se kholo", 6000), 800);
 }
 (async function init() {
   await loadLocalTracks();
   renderSetup();
   showView("setup");
   if (PARTY.SHOW_INTRO) startIntro();
-  else document.body.classList.remove("intro-mode");
-  if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => { if (state.game && state.view === "game") drawWheel(); });
-  }
+  else document.body.classList.remove("cine-mode");
 })();
