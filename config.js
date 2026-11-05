@@ -4,10 +4,9 @@
 
 const CONFIG = {
   APP_NAME: "Gaana Pehchano",
-  DEFAULT_CLIP: 5,          // 5 ya 10 sec
-  DEFAULT_ROUNDS: 5,
-  REPLAY_LIMIT: 1,          // ek turn mein kitni baar dobara suna sakte hain
-  POINTS_CORRECT: 1,
+  DEFAULT_CLIP: 10,         // 5 ya 10 sec
+  DEFAULT_COUNT: 15,        // ek game mein kitne gaane (10 / 15 / 20 / 0 = sab)
+  REPLAY_LIMIT: 1,          // ek gaana kitni baar dobara suna sakte hain
   RANDOM_START_MIN: 35,     // start null ho toh random point is range mein (seconds)
   RANDOM_START_MAX: 90,
   LOAD_TIMEOUT_MS: 12000,
@@ -15,28 +14,78 @@ const CONFIG = {
   DEFAULT_SOURCE: "local"   // "local" = apni instrumental files (no ads) | "youtube"
 };
 
-// ===== Diwali party intro =====
-// {H1} aur {H2} ki jagah HOSTS ke naam aa jayenge. Lines jo chaho badal lo.
+// ===== Diwali party: intro story + ending =====
+// {H1} / {H2} = hosts ke naam. Line format: [kaun bolega "H1"/"H2", chehra emoji, dialogue]
 const PARTY = {
   SHOW_INTRO: true,
   HOSTS: ["Sahil", "Sneha"],
-  SCENES: [
-    { type: "diya", title: "Happy Diwali!", sub: "Roshni, mithai aur thoda sa shor 🎆" },
-    { type: "hosts", title: "{H1} & {H2}", sub: "aap sabka dil se swagat karte hain 🙏" },
-    { type: "chat", lines: [
-      ["H1", "Sab aa gaye kya?"],
-      ["H2", "Haan! Jaldi kaju katli chhupao 🙈"],
-      ["H1", "Late aane walon ko sirf soan papdi milegi 😂"],
-      ["H2", "Aur jo gaana nahi pehchanega… woh naachega! 💃"]
+  FACES: ["🧑🏻", "👩🏻"],
+
+  STORY: [
+    { type: "title", title: "Ek Diwali ki raat…", sub: "Ek bilkul sacchi kahani. Thoda masala daal ke 😏" },
+
+    { type: "talk", caption: "Party se ek hafta pehle, ghar pe…", props: "🏠 🪔", lines: [
+      ["H1", "😎", "{H2}, is baar Diwali party apne ghar pe karte hain!"],
+      ["H2", "🤨", "Pakka? Pichli baar tum 3 ghante sirf rangoli ka design soch rahe the."],
+      ["H1", "😅", "Woh… art mein time lagta hai."]
     ] },
-    { type: "rules", title: "Aaj raat ke rules", items: [
-      ["🍬", "Kaju katli pe pehla haq hosts ka"],
-      ["📵", "\"Shaadi kab?\" aur \"Salary kitni?\" — aaj dono banned"],
-      ["💃", "Gaana nahi pehchana? 10 second naach ke dikhao"],
-      ["🧨", "Game haarne wala patakhon ka kachra uthayega"]
+
+    { type: "checklist", caption: "Taiyaari shuru. {H2} ki list:", items: [
+      ["Kaju katli", true], ["Diye", true], ["Patakhe", true], ["Rangoli", true], ["Party ka music", false]
+    ], lines: [
+      ["H2", "😱", "Music?! Music toh bhool hi gaye!"],
+      ["H1", "🤩", "Tension kyun? Main gaa dunga!"]
     ] },
-    { type: "go", title: "Toh chalo…", sub: "Gaana Pehchano shuru karein? 🎶" }
-  ]
+
+    { type: "talk", caption: "Aur phir {H1} ne gaana shuru kiya…", props: "🎤 🎶", shake: true, lines: [
+      ["H1", "🥹", "Aaaaa… aaaaaa… 🎶 (pure dil se)"],
+      ["H2", "🙉", "Bas karo! Padosi ne kutta chhod diya hai 🐕"],
+      ["H1", "😢", "Itna bhi bura nahi tha…"],
+      ["H2", "😐", "Kutta bhi bhaag gaya."]
+    ] },
+
+    { type: "talk", caption: "Phir aaya master plan 💡", props: "💡 🎧", lines: [
+      ["H2", "🤓", "Hum gaayenge nahi. Sirf gaane ki tune bajayenge."],
+      ["H2", "😏", "Aur guests ko gaana pehchanna padega!"],
+      ["H1", "🤯", "Aur jo nahi pehchanega…?"],
+      ["H2", "💃", "…woh naachega! Done."]
+    ] },
+
+    { type: "welcome", title: "{H1} & {H2}", sub: "aap sabka Diwali party mein dil se swagat karte hain 🙏" },
+
+    { type: "rules", title: "Khel ke rules", items: [
+      ["🎧", "Sirf tune bajegi — gaane ke bol nahi"],
+      ["🙋", "Jo sabse pehle sahi naam bataye, woh aaj ka star"],
+      ["💃", "Galat jawab? 10 second naach ke dikhao"],
+      ["📵", "\"Shaadi kab?\" aur \"Salary kitni?\" — aaj dono banned"]
+    ] },
+
+    { type: "go", title: "Gaana Pehchano!", sub: "Tune bajegi, naam aap batao 🎶" }
+  ],
+
+  // Reveal ke baad random mazedaar line
+  QUIPS: [
+    "Nahi pehchana? Dance floor aapka intezaar kar raha hai 💃",
+    "Jisne pehchana — ek kaju katli extra 🍬",
+    "Galat bola? Koi baat nahi, bas 10 second naach do 😄",
+    "Itna aasaan tha yaar! 😂",
+    "Sahi jawab pe taaliyan 👏👏",
+    "{H1} ne bhi nahi pehchana tha, chill 😅"
+  ],
+
+  // Game khatam hone pe ending — kisi ka naam nahi, sirf team ki taraf se
+  OUTRO: {
+    REPORT_TITLE: "Diwali Night Report",
+    KPIS: [
+      ["🎶", "Gaane baje", "{SONGS}"],
+      ["🧨", "Patakhe", "∞"],
+      ["🍬", "Mithai stock", "0 😅"],
+      ["😊", "Khushiyan", "100%"]
+    ],
+    REPORT_NOTE: "Status: Party successful ✅  Koi error nahi mila.",
+    WISH: "Happy Diwali!",
+    MESSAGE: "Aapki Diwali roshan, meethi aur bina kisi error ke ho. Naya saal khushiyon se bhara rahe 🪔"
+  }
 };
 
 const SONGS = [
