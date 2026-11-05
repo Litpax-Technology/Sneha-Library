@@ -3,7 +3,7 @@
 // ---------- Helpers ----------
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
-const COLORS = ["#ff4d8d", "#8b5cff", "#ffb020", "#22c58b", "#3aa0ff", "#ff6b3d", "#c04dff", "#16c7c7", "#e8457a", "#6f7cff"];
+const COLORS = ["#e5367a", "#f5a524", "#7b5cff", "#16a39a", "#ff6b3d", "#c0399b", "#3d8bfd", "#e0b100", "#2bb673", "#b5651d"];
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -363,25 +363,53 @@ function drawWheel() {
 
     ctx.save();
     ctx.translate(C, C);
-    ctx.rotate(a0 + seg / 2);
-    ctx.textAlign = "right";
+    const mid = (((a0 + seg / 2) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const flip = mid > Math.PI / 2 && mid < Math.PI * 1.5;   // left side pe ulta na dikhe
+    ctx.rotate(a0 + seg / 2 + (flip ? Math.PI : 0));
+    ctx.textAlign = flip ? "left" : "right";
     ctx.fillStyle = "#fff";
-    ctx.font = `800 ${n > 8 ? 20 : 26}px "Baloo 2", sans-serif`;
+    ctx.font = `700 ${n > 8 ? 20 : 25}px "Mukta", sans-serif`;
     ctx.shadowColor = "rgba(0,0,0,0.4)";
     ctx.shadowBlur = 4;
     const name = p.name.length > 12 ? p.name.slice(0, 11) + "…" : p.name;
-    ctx.fillText(name, R - 18, 9);
+    ctx.fillText(name, flip ? -(R - 18) : R - 18, 9);
     ctx.restore();
   }
-  // outer ring + center
+  // vinyl grooves
+  for (let r = R * 0.34; r < R - 4; r += 5) {
+    ctx.beginPath(); ctx.arc(C, C, r, 0, 2 * Math.PI);
+    ctx.strokeStyle = "rgba(0,0,0,0.10)"; ctx.lineWidth = 1; ctx.stroke();
+  }
+  // fixed light sheen (rotation ke saath nahi ghoomta)
+  const sheen = ctx.createLinearGradient(0, 0, W, W);
+  sheen.addColorStop(0, "rgba(255,255,255,0.22)");
+  sheen.addColorStop(0.45, "rgba(255,255,255,0)");
+  sheen.addColorStop(0.55, "rgba(0,0,0,0)");
+  sheen.addColorStop(1, "rgba(0,0,0,0.30)");
   ctx.beginPath(); ctx.arc(C, C, R, 0, 2 * Math.PI);
-  ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.lineWidth = 6; ctx.stroke();
-  ctx.beginPath(); ctx.arc(C, C, 34, 0, 2 * Math.PI);
-  ctx.fillStyle = "#160b2e"; ctx.fill();
-  ctx.strokeStyle = "#ffc23d"; ctx.lineWidth = 5; ctx.stroke();
-  ctx.font = "28px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("🎵", C, C + 2);
-  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = sheen; ctx.fill();
+  // dark rim
+  ctx.beginPath(); ctx.arc(C, C, R, 0, 2 * Math.PI);
+  ctx.strokeStyle = "#0e0820"; ctx.lineWidth = 8; ctx.stroke();
+  // center label
+  const LR = R * 0.27;
+  ctx.beginPath(); ctx.arc(C, C, LR, 0, 2 * Math.PI);
+  ctx.fillStyle = "#fff4e0"; ctx.fill();
+  ctx.beginPath(); ctx.arc(C, C, LR - 7, 0, 2 * Math.PI);
+  ctx.strokeStyle = "#f5a524"; ctx.lineWidth = 3; ctx.stroke();
+  ctx.save();
+  ctx.translate(C, C);
+  ctx.rotate(wheelRot);
+  ctx.fillStyle = "#2a1838"; ctx.textAlign = "center"; ctx.shadowBlur = 0;
+  ctx.font = `${Math.round(LR * 0.42)}px "Yatra One", sans-serif`;
+  ctx.fillText("Gaana", 0, -LR * 0.22);
+  ctx.font = `${Math.round(LR * 0.3)}px "Yatra One", sans-serif`;
+  ctx.fillStyle = "#e5367a";
+  ctx.fillText("Pehchano", 0, LR * 0.52);
+  ctx.restore();
+  // spindle hole
+  ctx.beginPath(); ctx.arc(C, C, 7, 0, 2 * Math.PI);
+  ctx.fillStyle = "#170e2e"; ctx.fill();
 }
 
 function spin() {
@@ -739,3 +767,6 @@ if (location.protocol === "file:") {
   setTimeout(() => toast("⚠️ File seedha khologe toh YouTube nahi chalega — GitHub Pages ya local server se kholo", 6000), 800);
 }
 renderSetup();
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(() => { if (state.game && state.view === "game") drawWheel(); });
+}
