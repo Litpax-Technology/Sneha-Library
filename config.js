@@ -10,7 +10,33 @@ const CONFIG = {
   POINTS_CORRECT: 1,
   RANDOM_START_MIN: 35,     // start null ho toh random point is range mein (seconds)
   RANDOM_START_MAX: 90,
-  LOAD_TIMEOUT_MS: 12000
+  LOAD_TIMEOUT_MS: 12000,
+  AD_WAIT_MS: 45000,        // YouTube ad ke liye kitna wait (ad ke time audio mute rehta hai)
+  DEFAULT_SOURCE: "local"   // "local" = apni instrumental files (no ads) | "youtube"
+};
+
+// ===== Diwali party intro =====
+// {H1} aur {H2} ki jagah HOSTS ke naam aa jayenge. Lines jo chaho badal lo.
+const PARTY = {
+  SHOW_INTRO: true,
+  HOSTS: ["Sahil", "Sneha"],
+  SCENES: [
+    { type: "diya", title: "Happy Diwali!", sub: "Roshni, mithai aur thoda sa shor 🎆" },
+    { type: "hosts", title: "{H1} & {H2}", sub: "aap sabka dil se swagat karte hain 🙏" },
+    { type: "chat", lines: [
+      ["H1", "Sab aa gaye kya?"],
+      ["H2", "Haan! Jaldi kaju katli chhupao 🙈"],
+      ["H1", "Late aane walon ko sirf soan papdi milegi 😂"],
+      ["H2", "Aur jo gaana nahi pehchanega… woh naachega! 💃"]
+    ] },
+    { type: "rules", title: "Aaj raat ke rules", items: [
+      ["🍬", "Kaju katli pe pehla haq hosts ka"],
+      ["📵", "\"Shaadi kab?\" aur \"Salary kitni?\" — aaj dono banned"],
+      ["💃", "Gaana nahi pehchana? 10 second naach ke dikhao"],
+      ["🧨", "Game haarne wala patakhon ka kachra uthayega"]
+    ] },
+    { type: "go", title: "Toh chalo…", sub: "Gaana Pehchano shuru karein? 🎶" }
+  ]
 };
 
 const SONGS = [
