@@ -123,17 +123,21 @@ const PARTY = {
     "{H2} ne toh pehli note pe pehchan liya tha 😎"
   ],
 
-  // Game khatam hone pe ending — kisi ka naam nahi, sirf team ki taraf se
+  // Game khatam hone pe ending: Shukriya → Diwali quotes → Happy Diwali
   OUTRO: {
-    REPORT_TITLE: "Diwali Night Report",
-    KPIS: [
-      ["📞", "Calls aayi", "{SONGS}"],
-      ["🧨", "Patakhe", "∞"],
-      ["🍬", "Mithai stock", "0 😅"],
-      ["😊", "Khushiyan", "100%"]
+    THANKS_KICKER: "Aaj ki raat",
+    THANKS_TITLE: "Shukriya 🙏",
+    THANKS_TEXT: "Aap sab aaye, hase, gaaye aur pehchane — isi se ye raat itni roshan hui.",
+    QUOTES_KICKER: "Diwali ki kuch baatein",
+    QUOTES: [
+      "Diye ki lau chhoti hoti hai, par andhera kitna bhi gehra ho — jeet hamesha roshni ki hoti hai.",
+      "Ghar diyon se sajta hai, par roshan apno se hota hai.",
+      "Roshni bahar ki ho ya mann ki — baantne se hi badhti hai.",
+      "Mithai ki mithaas ek din ki, rishton ki mithaas umr bhar ki.",
+      "Is Diwali purani shikayatein jala do, aur nayi khushiyon ke diye jala lo."
     ],
-    REPORT_NOTE: "Status: Party successful ✅  Koi error nahi mila.",
     WISH: "Happy Diwali!",
-    MESSAGE: "Aapki Diwali roshan, meethi aur bina kisi error ke ho. Naya saal khushiyon se bhara rahe 🪔"
+    MESSAGE: "Aapka ghar roshni se, mann sukoon se aur zindagi apno se bhari rahe. Naya saal nayi khushiyan laaye 🪔",
+    FROM: ""                  // chaaho toh: "— {H1} & {H2} ki taraf se ❤️"
   }
 };
