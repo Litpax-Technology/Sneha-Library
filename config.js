@@ -3,11 +3,13 @@
 
 const CONFIG = {
   APP_NAME: "Ringtune Pehchano",
-  DEFAULT_CLIP: 8,            // ringtone kitne second (8 ya 12)
+  DEFAULT_CLIP: 10,           // gaana kitne second bajega (5 / 10 / 15)
+  DEFAULT_POS: "mid",         // gaana kahan se: "start" | "mid" | "end" | "random"
+  START_SKIP: 0,              // "Shuru" mein itne second chhod ke bajao (khaali shuruaat ho toh 2-3 rakho)
+  END_GAP: 12,                // "End" mein aakhri itne second chhod do (aksar fade-out hota hai)
   DEFAULT_COUNT: 15,          // ek game mein kitne gaane (10 / 15 / 20 / 0 = sab)
-  REPLAY_LIMIT: 1,            // ek ringtone kitni baar dobara
+  REPLAY_LIMIT: 1,            // ek gaana kitni baar dobara
   REVEAL_CLIP: 15,            // answer ke baad asli gaana kitne second bajega
-  AUTO_START: 0.3,            // Start khali ho toh gaane ke kitne hisse se (0.3 = 30% pe, aksar chorus ke paas)
 
   // "Language: Auto" mein in singers ke gaane Punjabi maane jayenge (naya naam jodna ho toh yahan likh do)
   PUNJABI_SINGERS: [
