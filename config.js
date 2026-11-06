@@ -3,8 +3,6 @@
 
 const CONFIG = {
   APP_NAME: "Ringtune Pehchano",
-  DEFAULT_MODE: "ringtune",   // "ringtune" | "speaker" | "mix"
-  DEFAULT_VOICE: "nokia",     // "nokia" | "marimba" | "bit8" | "bansuri" | "seeti"
   DEFAULT_CLIP: 8,            // ringtone kitne second (8 ya 12)
   DEFAULT_COUNT: 15,          // ek game mein kitne gaane (10 / 15 / 20 / 0 = sab)
   REPLAY_LIMIT: 1,            // ek ringtone kitni baar dobara
