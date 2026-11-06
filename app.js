@@ -209,6 +209,11 @@ async function updateTrack(id, patch) {
   try { await idb.put("meta", t); } catch (e) { toast("Save nahi hua"); }
 }
 async function getLocalUrl(fid) {
+  if (String(fid).startsWith("srv:")) {               // GitHub wala gaana: seedha link se stream
+    const t = trackById(fid);
+    if (!t || !t.url) throw new Error("missing");
+    return t.url;
+  }
   if (urlCache[fid]) return urlCache[fid];
   const rec = await idb.get("blobs", fid);
   if (!rec || !rec.blob) throw new Error("missing");
@@ -316,7 +321,7 @@ function saveSettings() { store.set("rp_settings2", state.settings); }
 
 function playableSongs() {
   const lang = state.settings.lang;
-  return localTracks.filter((t) => (lang === "Mix" || t.lang === lang) && !broken.has(t.id));
+  return localTracks.filter((t) => (lang === "Mix" || t.lang === lang) && !broken.has(t.id) && !t.hidden);
 }
 
 // ---------- Setup ----------
@@ -329,8 +334,9 @@ function renderSetup() {
   setSeg("#replaySeg", S.replay);
   const pool = playableSongs();
   const custom = pool.filter((t) => hasStart(t.start)).length;
+  const web = pool.filter((t) => t.src === "server").length;
   $("#songCountInfo").textContent = localTracks.length
-    ? `🎵 ${pool.length} gaane ready · ${POS_NAMES[S.pos]} bajenge${custom ? ` (${custom} gaane apne "Start" second se)` : ""}. Bina internet chalega.`
+    ? `🎵 ${pool.length} gaane ready${web ? ` (🌐 ${web} GitHub se — internet chahiye)` : ""} · ${POS_NAMES[S.pos]} bajenge${custom ? ` (${custom} gaane apne "Start" second se)` : ""}.${web ? "" : " Bina internet chalega."}`
     : `📁 Abhi koi gaana nahi. "Gaane" tab mein mp3 files daalo.`;
 }
 function setSeg(sel, val) {
@@ -583,16 +589,18 @@ function renderLocalTable() {
     body.innerHTML = `<tr><td colspan="7" class="empty">Abhi koi gaana nahi — upar "Files chuno" ya "Poora folder" dabao</td></tr>`;
     return;
   }
-  body.innerHTML = localTracks.map((t, i) => `<tr data-fid="${t.id}">
-      <td>${i + 1}</td>
+  body.innerHTML = localTracks.map((t, i) => `<tr data-fid="${esc(t.id)}" class="${t.hidden ? "row-hidden" : ""}">
+      <td>${i + 1}${t.src === "server" ? ' <span title="GitHub se">🌐</span>' : ""}</td>
       <td><input class="f-title" type="text" value="${esc(t.title)}" title="${esc(t.file)}"></td>
       <td><input class="f-singer" type="text" value="${esc(t.singer)}" placeholder="Singer"></td>
       <td><input class="f-movie" type="text" value="${esc(t.movie)}" placeholder="Movie (hint)"></td>
       <td><select class="f-lang"><option${t.lang === "Hindi" ? " selected" : ""}>Hindi</option><option${t.lang === "Punjabi" ? " selected" : ""}>Punjabi</option></select></td>
       <td><input class="start f-start" type="number" min="0" value="${hasStart(t.start) ? +t.start : ""}" placeholder="auto"></td>
       <td><div class="acts">
-        <button data-lplay="${t.id}" title="Jaise game mein bajega waise suno">▶</button>
-        <button data-ldel="${t.id}" title="Hatao">🗑</button>
+        <button data-lplay="1" title="Jaise game mein bajega waise suno">▶</button>
+        ${t.src === "server"
+          ? `<button data-lhide="1" title="${t.hidden ? "Game mein wapas lao" : "Game mein mat bajao (GitHub se hatana ho toh repo se delete karo)"}">${t.hidden ? "👁" : "🙈"}</button>`
+          : `<button data-ldel="1" title="Hatao">🗑</button>`}
       </div></td>
     </tr>`).join("");
 }
@@ -628,6 +636,10 @@ $("#localTable").addEventListener("click", async (e) => {
       broken.add(t.id);
       toast("Ye file nahi chali");
     }
+  } else if (b.dataset.lhide) {
+    await updateTrack(t.id, { hidden: !t.hidden });
+    renderLocalTable();
+    renderSetup();
   } else if (b.dataset.ldel && confirm("Ye gaana list se hatana hai?")) {
     const id = t.id;
     stopAudio();
@@ -640,6 +652,116 @@ $("#localTable").addEventListener("click", async (e) => {
   }
 });
 
+// ---------- GitHub ke gaane (repo ka "songs" folder) ----------
+// Repo mein songs/ folder ke andar mp3 daalo → link kisi bhi phone/laptop pe kholo → gaane apne aap aa jaate hain.
+// Gaane download nahi hote, zaroorat pe stream hote hain (isliye internet chahiye).
+const AUDIO_RX = /\.(mp3|m4a|aac|wav|ogg|opus|flac|webm)$/i;
+function songsFolder() { return String(CONFIG.SONGS_FOLDER || "songs").replace(/^\/+|\/+$/g, ""); }
+
+// Repo ka naam link se pehchano: <owner>.github.io/<repo>/
+function repoInfo() {
+  if (CONFIG.GITHUB_REPO) { const [o, r] = CONFIG.GITHUB_REPO.split("/"); return o && r ? { o, r } : null; }
+  const h = location.hostname;
+  if (!h.endsWith(".github.io")) return null;
+  const o = h.slice(0, -".github.io".length);
+  const seg = location.pathname.split("/").filter(Boolean)[0];
+  return { o, r: seg && !/\.html?$/i.test(seg) ? seg : h };
+}
+
+async function listServerSongs() {
+  if (Array.isArray(CONFIG.SONGS) && CONFIG.SONGS.length) return CONFIG.SONGS.filter((n) => AUDIO_RX.test(n));
+  // songs/list.json (optional — GitHub ke bina kisi aur hosting pe)
+  try {
+    const r = await fetch(songsFolder() + "/list.json", { cache: "no-store" });
+    if (r.ok) { const j = await r.json(); if (Array.isArray(j)) return j.filter((n) => AUDIO_RX.test(n)); }
+  } catch (e) {}
+  const ri = repoInfo();
+  if (!ri) return null;
+  const r = await fetch(`https://api.github.com/repos/${ri.o}/${ri.r}/contents/${songsFolder()}`, { cache: "no-store" });
+  if (r.status === 404) return [];
+  if (!r.ok) throw new Error("github " + r.status);
+  const j = await r.json();
+  return (Array.isArray(j) ? j : []).filter((x) => x.type === "file" && AUDIO_RX.test(x.name)).map((x) => x.name);
+}
+
+// Gaane ka sirf shuru ka hissa lao (naam/singer padhne ke liye) — poora gaana download nahi
+async function fetchHead(url, n = 262144) {
+  const ctrl = new AbortController();
+  const r = await fetch(url, { headers: { Range: `bytes=0-${n - 1}` }, signal: ctrl.signal });
+  if (!r.ok) throw new Error("fetch " + r.status);
+  if (r.status === 206 || !r.body) return (await r.blob()).slice(0, n);
+  const reader = r.body.getReader();
+  const chunks = [];
+  let got = 0;
+  while (got < n) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+  }
+  try { ctrl.abort(); } catch (e) {}
+  return new Blob(chunks).slice(0, n);
+}
+
+let syncing = false;
+async function loadServerSongs(manual) {
+  if (location.protocol === "file:") {
+    if (manual) toast("Ye button GitHub link pe chalta hai. Laptop se seedha kholne pe 'Files chuno' use karo.", 4000);
+    return;
+  }
+  if (syncing) return;
+  syncing = true;
+  const btn = $("#syncBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ GitHub se la rahe hain…"; }
+  let names, fromCache = false;
+  try {
+    names = await listServerSongs();
+    if (names) store.set("rp_srvlist", names);
+  } catch (e) {
+    names = store.get("rp_srvlist", null);
+    fromCache = true;
+  }
+  let added = 0, removed = 0;
+  if (names) {
+    names = names.filter((n) => !SKIP_RX.test(n));
+    const folder = songsFolder();
+    for (const name of names) {
+      const id = "srv:" + name;
+      const url = folder + "/" + encodeURIComponent(name);
+      const t = trackById(id);
+      if (t) { if (t.url !== url) await updateTrack(id, { url }); continue; }
+      if (btn) btn.textContent = `⏳ Gaane aa rahe hain… ${added + 1}`;
+      let info = parseFileName(name);
+      try { info = await smartInfo(new File([await fetchHead(url)], name)); } catch (e) {}
+      const lang = CONFIG.SONGS_LANG && CONFIG.SONGS_LANG !== "auto" ? CONFIG.SONGS_LANG : guessLang(info.singer, name);
+      const meta = { id, src: "server", url, file: name, added: Date.now() + added, title: info.title || "Bina naam", singer: info.singer || "", movie: info.movie || "", lang, start: null, hidden: false };
+      try { await idb.put("meta", meta); localTracks.push(meta); added++; } catch (e) {}
+    }
+    // Jo gaane GitHub se hata diye, unhe yahan se bhi hatao (cache wali list pe nahi)
+    if (!fromCache) {
+      const keep = new Set(names.map((n) => "srv:" + n));
+      for (const t of localTracks.filter((x) => x.src === "server" && !keep.has(x.id))) {
+        try { await idb.del("meta", t.id); removed++; } catch (e) {}
+      }
+    }
+  }
+  await loadLocalTracks();
+  renderLocalTable();
+  renderSetup();
+  syncing = false;
+  if (btn) { btn.disabled = false; btn.textContent = "🔄 GitHub se gaane laao"; }
+  const total = localTracks.filter((t) => t.src === "server").length;
+  if (!names) { if (manual) toast("GitHub repo nahi pehchana — config.js mein GITHUB_REPO bhar do", 4500); return; }
+  if (manual || added || removed) {
+    const parts = [`🌐 GitHub ke ${total} gaane ready`];
+    if (added) parts.push(`${added} naye`);
+    if (removed) parts.push(`${removed} hataye`);
+    if (fromCache) parts.push("(abhi purani list — GitHub thodi der baad try karo)");
+    if (!total) parts.push(`— repo ke "${songsFolder()}" folder mein mp3 daalo`);
+    toast(parts.join(" · "), 4500);
+  }
+}
+$("#syncBtn").addEventListener("click", () => loadServerSongs(true));
 // ---------- Navigation ----------
 function showView(v) {
   state.view = v;
@@ -728,9 +850,13 @@ $("#fillTagsBtn").addEventListener("click", async () => {
   let changed = 0;
   for (const t of localTracks) {
     try {
-      const rec = await idb.get("blobs", t.id);
-      if (!rec || !rec.blob) continue;
-      const blob = rec.blob.name ? rec.blob : new File([rec.blob], t.file || "song.mp3");
+      let blob;
+      if (t.src === "server") blob = new File([await fetchHead(t.url)], t.file || "song.mp3");
+      else {
+        const rec = await idb.get("blobs", t.id);
+        if (!rec || !rec.blob) continue;
+        blob = rec.blob.name ? rec.blob : new File([rec.blob], t.file || "song.mp3");
+      }
       const info = await smartInfo(blob);
       const patch = {};
       const cleanT = cleanName(t.title);
@@ -1642,6 +1768,7 @@ $("#splashTitle").textContent = CONFIG.APP_NAME;
   await loadLocalTracks();
   renderSetup();
   showView("setup");
+  loadServerSongs(false);          // GitHub ke "songs" folder wale gaane (background mein)
   if (PARTY.SHOW_INTRO) {
     $("#cine").dataset.mood = "title";
     $("#splash").classList.remove("hidden");
