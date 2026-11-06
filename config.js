@@ -16,12 +16,27 @@ const CONFIG = {
 
 // ===== Diwali party: intro story + ending =====
 // {H1} / {H2} = hosts ke naam. Line format: [kaun bolega "H1"/"H2", chehra emoji, dialogue, sound effect (optional)]
-// Sound effects: "offkey" (besura gaana), "wah" (wah-wah-wah), "ting" (idea), "aww" (pyaari chime)
+// Sound effects (line ke 4th jagah ya scene pe sfx: "..."):
+//   boing, rimshot (ba-dum-tss), dun (dun dun duuun), scratch (record scratch, music rukta hai),
+//   offkey (besura gaana), wah (wah-wah-wah), ting (idea), aww, harp, heartbeat, sparkle, tada, mindblown, pop
 // Scene ka mood: title / funny / love / celebrate / calm — usi hisaab se background music aur rang badalte hain
 const PARTY = {
   SHOW_INTRO: true,
   MUSIC: true,              // cinematic background music (false = bilkul band)
-  INTRO_MUSIC: "",          // apni mp3 lagani ho toh path daalo, e.g. "music/intro.mp3" — khali = app khud live music banayega
+  INTRO_MUSIC: "",          // poori kahani mein EK hi mp3 chahiye toh yahan path daalo (ye MUSIC_FILES se upar hai)
+
+  // Har mood ka apna instrumental — "music" folder mein mp3 daalo, naam yahi rakho.
+  // Koi file nahi mili toh us mood ke liye app khud live music bana lega.
+  MUSIC_FILES: {
+    title: "music/title.mp3",          // cinematic, dheema, rongte khade
+    funny: "music/funny.mp3",          // halka-phulka, comedy
+    love: "music/love.mp3",            // bansuri / piano, romantic
+    celebrate: "music/celebrate.mp3",  // dhol, festive, Diwali vibe
+    calm: "music/calm.mp3"             // sitar / soft, rules & report ke liye
+  },
+
+  // Optional: kisi effect ki asli mp3 ho toh yahan (e.g. rimshot: "sfx/rimshot.mp3"). Khali = live bana effect.
+  SFX_FILES: {},
   HOSTS: ["Sahil", "Sneha"],
   FACES: ["🧑🏻", "👩🏻"],
 
@@ -31,24 +46,24 @@ const PARTY = {
     { type: "talk", caption: "Party se ek hafta pehle, ghar pe…", props: "🏠 🪔", lines: [
       ["H1", "😎", "{H2}, is baar Diwali party apne ghar pe karte hain!"],
       ["H2", "🤨", "Pakka? Pichli baar tum 3 ghante sirf rangoli ka design soch rahe the."],
-      ["H1", "😅", "Art hai ji, time lagta hai… Picasso ko bhi laga tha."]
+      ["H1", "😅", "Art hai ji, time lagta hai… Picasso ko bhi laga tha.", "boing"]
     ] },
 
     { type: "checklist", caption: "Taiyaari shuru. {H2} ki list:", items: [
       ["Kaju katli", true], ["Diye", true], ["Lights", true], ["Rangoli", true], ["Party ka music", false]
     ], lines: [
-      ["H2", "😱", "Music?! Music toh bhool hi gaye!"],
-      ["H1", "🤩", "Tension kyun lete ho? Main gaa dunga!"]
+      ["H2", "😱", "Music?! Music toh bhool hi gaye!", "dun"],
+      ["H1", "🤩", "Tension kyun lete ho? Main gaa dunga!", "ting"]
     ] },
 
     { type: "talk", caption: "Aur phir {H1} ne gaana shuru kiya…", props: "🎤 🎶", shake: true, lines: [
       ["H1", "🥹", "Aaaaa… aaaaaa… 🎶 (pure dil se)", "offkey"],
-      ["H2", "🙉", "Ruko ruko! Building ki saari lights flicker hone lagi!"],
+      ["H2", "🙉", "Ruko ruko! Building ki saari lights flicker hone lagi!", "scratch"],
       ["H1", "😢", "Woh toh… Diwali effect hai.", "wah"],
-      ["H2", "😂", "Nahi ji, woh tumhara effect hai."]
+      ["H2", "😂", "Nahi ji, woh tumhara effect hai.", "rimshot"]
     ] },
 
-    { type: "talk", mood: "love", night: true, lanterns: true, caption: "Us raat, chhat pe… diyon ke beech", props: "🪔 ✨ 🪔", lines: [
+    { type: "talk", mood: "love", night: true, lanterns: true, sfx: "harp", caption: "Us raat, chhat pe… diyon ke beech", props: "🪔 ✨ 🪔", lines: [
       ["H1", "🙂", "Sach bataun? Mujhe party se zyada ye pal pasand hai."],
       ["H2", "🥺", "Kaunsa pal?"],
       ["H1", "😊", "Jab sab apne saath hote hain… aur tum bhi."],
@@ -58,12 +73,12 @@ const PARTY = {
     { type: "hearts", title: "Kyunki Diwali sirf roshni ka nahi…", sub: "apno ka tyohaar hai ❤️" },
 
     { type: "talk", caption: "Aur phir aaya master plan 💡", props: "💡 🎧", lines: [
-      ["H2", "😄", "Accha, romance baad mein… music ka kya?!"],
-      ["H1", "😅", "Arre haan! Woh toh abhi bhi pending hai."],
+      ["H2", "😄", "Accha, romance baad mein… music ka kya?!", "scratch"],
+      ["H1", "😅", "Arre haan! Woh toh abhi bhi pending hai.", "boing"],
       ["H2", "🤓", "Hum gaayenge nahi. Sirf gaane ki tune bajayenge.", "ting"],
       ["H2", "😏", "Aur guests ko gaana pehchanna padega!"],
-      ["H1", "🤯", "Aur jo nahi pehchanega…?"],
-      ["H2", "💃", "…woh naachega! Done."]
+      ["H1", "🤯", "Aur jo nahi pehchanega…?", "mindblown"],
+      ["H2", "💃", "…woh naachega! Done.", "rimshot"]
     ] },
 
     { type: "welcome", title: "{H1} & {H2}", sub: "aap sabka Diwali party mein dil se swagat karte hain 🙏" },
