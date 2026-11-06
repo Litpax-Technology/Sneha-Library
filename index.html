@@ -6,19 +6,39 @@
   <title>Gaana Pehchano — Diwali Night</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Mukta:wght@400;600;700;800&family=Yatra+One&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Mukta:wght@400;600;700;800&family=Yatra+One&family=Cormorant+Garamond:ital,wght@1,500;1,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body class="cine-mode">
   <canvas id="fx" aria-hidden="true"></canvas>
 
+  <!-- ===== SPLASH: tap karke shuru (isi se music on hota hai) ===== -->
+  <div id="splash" class="splash hidden">
+    <div class="splash-inner">
+      <div class="diya" style="--d:.4s"><i class="flame"></i></div>
+      <p class="kicker">Diwali Night Special</p>
+      <h1 id="splashTitle" class="gold-text">Gaana Pehchano</h1>
+      <button id="splashBtn" class="btn big">🪔 Tap karke shuru karo</button>
+      <p class="muted small hint">🔊 Awaaz on rakho — kahani music ke saath hai</p>
+    </div>
+  </div>
+
   <!-- ===== CINEMA: intro story + ending ===== -->
-  <section id="cine" class="cine" aria-live="polite">
+  <section id="cine" class="cine" data-mood="title" aria-live="polite">
+    <div class="cine-sky" aria-hidden="true">
+      <div class="stars s1"></div>
+      <div class="stars s2"></div>
+      <div class="glow"></div>
+      <div id="lanterns" class="lanterns"></div>
+    </div>
+    <div class="cine-grain" aria-hidden="true"></div>
+    <div id="cineFade" class="cine-fade" aria-hidden="true"></div>
     <div class="toran" aria-hidden="true"></div>
     <div id="cineStage" class="cine-stage"></div>
     <div class="cine-nav">
       <div id="cineDots" class="cine-dots"></div>
       <div class="row">
+        <button id="muteBtn" class="btn ghost small icon" title="Music">🔊</button>
         <button id="cineSkip" class="btn ghost small">Skip</button>
         <button id="cineNext" class="btn small">Aage ✨</button>
       </div>
@@ -28,7 +48,7 @@
   <div class="app">
     <div class="toran" aria-hidden="true"></div>
     <header class="topbar">
-      <div class="brand">🪔 <span id="appName">Gaana Pehchano</span></div>
+      <div class="brand">🪔 <span id="appName" class="gold-text">Gaana Pehchano</span></div>
       <nav class="tabs">
         <button class="tab active" data-nav="game">🎶 Game</button>
         <button class="tab" data-nav="songs">🎵 Songs</button>
