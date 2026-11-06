@@ -579,7 +579,7 @@ td .acts button.on { background: rgba(255, 194, 75, 0.25); border-color: var(--s
 #localTable td input.start { min-width: 64px; width: 70px; }
 #localTable td input.f-title { min-width: 150px; }
 #localTable td .status { max-width: 150px; white-space: normal; }
-#localTable td .acts { flex-wrap: nowrap; }
+
 
 /* ===== Responsive ===== */
 @media (max-width: 700px) {
@@ -605,3 +605,10 @@ td .acts button.on { background: rgba(255, 194, 75, 0.25); border-color: var(--s
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition: none !important; }
 }
+/* Ghantiyan setting: lamba label wrap ho sake */
+#ladderSeg button { white-space: normal; text-align: center; }
+.setup-note { margin: 4px 0 2px; }
+#localTable td .acts { flex-wrap: wrap; max-width: 132px; }
+#localTable td .status { max-width: 120px; }
+#localTable td:last-child { min-width: 132px; }
+#localTable td .acts { display: grid; grid-template-columns: repeat(3, auto); gap: 4px; justify-content: start; }
