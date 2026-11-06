@@ -180,7 +180,7 @@ async function addFiles(fileList) {
     const p = await smartInfo(f);
     const lang = langPick === "auto" ? guessLang(p.singer, f.name) : langPick;
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    const meta = { id, added: Date.now() + added, file: f.name, title: p.title, singer: p.singer, movie: p.movie, lang, start: null, notes: null, notesKey: null, ringOk: null };
+    const meta = { id, added: Date.now() + added, file: f.name, title: p.title, singer: p.singer, movie: p.movie, lang, start: null, vr: null, vrKey: null, ringOk: null };
     try {
       await idb.put("blobs", { id, blob: f });
       await idb.put("meta", meta);
@@ -210,174 +210,10 @@ async function getLocalUrl(fid) {
 }
 
 // ---------- Ringtone engine ----------
-// Mode 1: gaane ke hisse se dhun (melody) nikal ke ringtone ki awaaz mein bajana
-// Mode 2: wahi hissa "purane phone ke speaker" jaisa bajana
-const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
+// Ringtone = asli gaane ka hissa, singer ki awaaz hata ke (sirf music).
+// Tareeka: stereo gaane mein singer beech (center) mein hota hai → Left − Right karne se woh kat jaata hai,
+// aur bass/kick (jo bhi center mein hote hain) ko alag se wapas jod dete hain.
 function actx() { music.unlock(true); return music.ctx; }
-
-// Dhun nikaalna: YIN pitch detection → notes
-function extractNotes(x, sr) {
-  const W = 512, H = 256, minLag = Math.floor(sr / 1100), maxLag = Math.ceil(sr / 150);
-  const d = new Float32Array(maxLag + 2);
-  let gs = 0;
-  for (let i = 0; i < x.length; i++) gs += x[i] * x[i];
-  const grms = Math.sqrt(gs / x.length) || 1e-9;
-  const frames = [], energy = [];
-  for (let pos = 0; pos + W + maxLag + 1 < x.length; pos += H) {
-    let e = 0;
-    for (let i = 0; i < W; i++) e += x[pos + i] * x[pos + i];
-    energy.push(Math.sqrt(e / W));
-    if (Math.sqrt(e / W) < grms * 0.35) { frames.push(null); continue; }
-    for (let tau = 1; tau <= maxLag + 1; tau++) {
-      let s = 0;
-      for (let i = 0; i < W; i++) { const dd = x[pos + i] - x[pos + i + tau]; s += dd * dd; }
-      d[tau] = s;
-    }
-    let run = 0;
-    d[0] = 1;
-    for (let tau = 1; tau <= maxLag + 1; tau++) { run += d[tau]; d[tau] = run ? (d[tau] * tau) / run : 1; }
-    let best = -1;
-    for (let tau = minLag; tau <= maxLag; tau++) {
-      if (d[tau] < 0.15) { while (tau + 1 <= maxLag && d[tau + 1] < d[tau]) tau++; best = tau; break; }
-    }
-    if (best < 0) {
-      let mi = minLag;
-      for (let tau = minLag; tau <= maxLag; tau++) if (d[tau] < d[mi]) mi = tau;
-      if (d[mi] < 0.35) best = mi;
-    }
-    if (best < 0) { frames.push(null); continue; }
-    const a = d[best - 1], b = d[best], c = d[best + 1];
-    const den = a + c - 2 * b;
-    const shift = den ? (a - c) / (2 * den) : 0;
-    frames.push(69 + 12 * Math.log2(sr / (best + shift) / 440));
-  }
-  // median smoothing
-  const sm = frames.map((v, i) => {
-    if (v == null) return null;
-    const w = [];
-    for (let k = -2; k <= 2; k++) { const u = frames[i + k]; if (u != null) w.push(u); }
-    w.sort((p, q) => p - q);
-    return w[w.length >> 1];
-  });
-  // frames → notes
-  const hop = H / sr;
-  let raw = [], cur = null;
-  sm.forEach((v, i) => {
-    const r = v == null ? null : Math.round(v);
-    // same sur dobara baja (nayi chot / onset) → alag note, taaki rhythm bani rahe
-    const onset = i > 1 && energy[i] > 1.45 * Math.min(energy[i - 1], energy[i - 2]) && energy[i] > grms * 0.5;
-    if (cur && r === cur.m && !(onset && cur.n >= 4)) { cur.n++; return; }
-    if (cur) raw.push(cur);
-    cur = r == null ? null : { i, n: 1, m: r };
-  });
-  if (cur) raw.push(cur);
-  let notes = raw.map((n) => ({ t: n.i * hop, d: n.n * hop, m: n.m })).filter((n) => n.d >= 0.07);
-  // same sur ke tukde jodo
-  const merged = [];
-  notes.forEach((n) => {
-    const p = merged[merged.length - 1];
-    if (p && p.m === n.m && n.t - (p.t + p.d) < 0.06 && n.t - (p.t + p.d) > 0.001) p.d = n.t + n.d - p.t;
-    else merged.push({ ...n });
-  });
-  notes = merged;
-  // octave ki galti theek karo
-  for (let i = 1; i < notes.length - 1; i++) {
-    const p = notes[i - 1].m, n = notes[i + 1].m, c = notes[i].m;
-    if (Math.abs(c - p) >= 10 && Math.abs(c - n) >= 10 && Math.abs(p - n) < 5) notes[i].m += 12 * Math.round(((p + n) / 2 - c) / 12);
-  }
-  // chhote gaps bharo (legato)
-  for (let i = 0; i < notes.length - 1; i++) {
-    const gap = notes[i + 1].t - (notes[i].t + notes[i].d);
-    if (gap > 0 && gap < 0.12) notes[i].d += gap;
-  }
-  if (!notes.length) return [];
-  // ringtone jaisi oonchi awaaz pe le jao
-  const ms = notes.map((n) => n.m).sort((p, q) => p - q);
-  const tr = 12 * Math.round((74 - ms[ms.length >> 1]) / 12);
-  const t0 = notes[0].t;
-  return notes.map((n) => ({ t: +(n.t - t0).toFixed(3), d: +Math.min(n.d, 1.6).toFixed(3), m: n.m + tr }));
-}
-
-// --- Ringtone ki awaazein ---
-let pulseWave = null;
-function pulse(c) {
-  if (pulseWave) return pulseWave;
-  const N = 32, real = new Float32Array(N), imag = new Float32Array(N), duty = 0.25;
-  for (let n = 1; n < N; n++) real[n] = (2 / (n * Math.PI)) * Math.sin(n * Math.PI * duty);
-  return (pulseWave = c.createPeriodicWave(real, imag));
-}
-function envGain(c, t, a, hold, rel, peak) {
-  const g = c.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.linearRampToValueAtTime(peak, t + a);
-  g.gain.setValueAtTime(peak, t + a + Math.max(0, hold));
-  g.gain.exponentialRampToValueAtTime(0.0001, t + a + Math.max(0, hold) + rel);
-  return g;
-}
-const VOICES = {
-  nokia(c, out, t, d, f) {
-    const o = c.createOscillator(); o.type = "square"; o.frequency.value = f;
-    const lp = c.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 3500;
-    const e = envGain(c, t, 0.005, d * 0.82 - 0.01, 0.03, 0.085);
-    o.connect(lp); lp.connect(e); e.connect(out);
-    o.start(t); o.stop(t + d + 0.1);
-  },
-  marimba(c, out, t, d, f) {
-    const hit = (s, v) => {
-      [[1, 1, 0.9], [3.9, 0.18, 0.12], [10, 0.05, 0.04]].forEach(([m, a, dec]) => {
-        const o = c.createOscillator(); o.type = "sine"; o.frequency.value = f * m;
-        const e = envGain(c, s, 0.003, 0, Math.min(dec * (m === 1 ? 1 : 1), 1.2), 0.32 * a * v);
-        o.connect(e); e.connect(out); o.start(s); o.stop(s + 1.4);
-      });
-    };
-    hit(t, 1);
-    for (let s = t + 0.2; s < t + d - 0.08; s += 0.2) hit(s, 0.55);   // lambe sur pe tremolo
-  },
-  bit8(c, out, t, d, f) {
-    const o = c.createOscillator(); o.setPeriodicWave(pulse(c));
-    o.frequency.setValueAtTime(f * 2, t); o.frequency.setValueAtTime(f, t + 0.025);
-    const e = envGain(c, t, 0.003, d * 0.7, 0.04, 0.1);
-    o.connect(e); e.connect(out); o.start(t); o.stop(t + d + 0.1);
-  },
-  bansuri(c, out, t, d, f, prev) {
-    const o = c.createOscillator(); o.type = "sine";
-    if (prev && t - prev.end < 0.08) { o.frequency.setValueAtTime(prev.f, t); o.frequency.exponentialRampToValueAtTime(f, t + 0.05); }
-    else o.frequency.setValueAtTime(f, t);
-    const vib = c.createOscillator(); vib.frequency.value = 5.2;
-    const vg = c.createGain(); vg.gain.setValueAtTime(0, t); vg.gain.linearRampToValueAtTime(f * 0.012, t + Math.min(0.35, d));
-    vib.connect(vg); vg.connect(o.frequency);
-    const o2 = c.createOscillator(); o2.type = "sine"; o2.frequency.value = f * 2;
-    const g2 = c.createGain(); g2.gain.value = 0.12; o2.connect(g2);
-    const e = envGain(c, t, 0.05, d - 0.05, 0.12, 0.22);
-    o.connect(e); g2.connect(e); e.connect(out);
-    const n = c.createBufferSource(); n.buffer = music.noise;
-    const bp = c.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = f * 2; bp.Q.value = 1.5;
-    const ne = envGain(c, t, 0.03, 0.02, 0.12, 0.04);
-    n.connect(bp); bp.connect(ne); ne.connect(out);
-    o.start(t); o2.start(t); vib.start(t); n.start(t);
-    const end = t + d + 0.2;
-    o.stop(end); o2.stop(end); vib.stop(end); n.stop(t + 0.25);
-  },
-  seeti(c, out, t, d, f, prev) {
-    const F = f * 2;
-    const o = c.createOscillator(); o.type = "sine";
-    if (prev && t - prev.end < 0.1) { o.frequency.setValueAtTime(prev.f * 2, t); o.frequency.exponentialRampToValueAtTime(F, t + 0.06); }
-    else { o.frequency.setValueAtTime(F * 0.94, t); o.frequency.exponentialRampToValueAtTime(F, t + 0.05); }
-    const vib = c.createOscillator(); vib.frequency.value = 6;
-    const vg = c.createGain(); vg.gain.value = F * 0.008;
-    vib.connect(vg); vg.connect(o.frequency);
-    const e = envGain(c, t, 0.03, d - 0.04, 0.08, 0.15);
-    o.connect(e); e.connect(out);
-    const n = c.createBufferSource(); n.buffer = music.noise; n.loop = true;
-    const bp = c.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = F; bp.Q.value = 8;
-    const ne = envGain(c, t, 0.03, d - 0.04, 0.08, 0.05);
-    n.connect(bp); bp.connect(ne); ne.connect(out);
-    o.start(t); vib.start(t); n.start(t);
-    const end = t + d + 0.15;
-    o.stop(end); vib.stop(end); n.stop(end);
-  }
-};
-const VOICE_NAMES = { nokia: "📱 Nokia", marimba: "🎹 Marimba", bit8: "👾 8-bit", bansuri: "🪈 Bansuri", seeti: "😗 Seeti" };
 
 const ring = {
   segCache: new Map(),
@@ -403,79 +239,92 @@ const ring = {
     const n = Math.max(1, Math.min(full.length - from, Math.floor((len + 1) * sr)));
     const seg = c.createBuffer(full.numberOfChannels, n, sr);
     for (let ch = 0; ch < full.numberOfChannels; ch++) seg.getChannelData(ch).set(full.getChannelData(ch).subarray(from, from + n));
-    const out = { buf: seg, start: st, dur, rev: null };
+    const out = { buf: seg, start: st, dur, music: null, stereo: null };
     if (this.segCache.size >= 6) this.segCache.delete(this.segCache.keys().next().value);
     this.segCache.set(key, out);
     return out;
   },
 
-  // Dhun nikaalo (ek baar banti hai, phir browser mein save)
-  async melody(t, len) {
-    const key = (hasStart(t.start) ? +t.start : "a") + "|" + len;
-    if (t.notes && t.notesKey === key) return t.notes;
-    const seg = await this.segment(t, len);
-    const SR = 22050;
-    const off = new OfflineAudioContext(1, Math.ceil(Math.min(seg.buf.duration, len) * SR), SR);
-    const src = off.createBufferSource(); src.buffer = seg.buf;
-    const hp = off.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 170;
-    const lp = off.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 2000;
-    src.connect(hp); hp.connect(lp); lp.connect(off.destination);
-    src.start();
-    const rendered = await off.startRendering();
-    const notes = extractNotes(rendered.getChannelData(0), SR);
-    await updateTrack(t.id, { notes, notesKey: key, ringOk: notes.length >= 6 ? null : false });
-    return notes;
+  // Kya gaana sach mein stereo hai? (mono mein singer ko alag nahi kar sakte)
+  isStereo(buf) {
+    if (buf.numberOfChannels < 2) return false;
+    const L = buf.getChannelData(0), R = buf.getChannelData(1);
+    let side = 0, mid = 0;
+    for (let i = 0; i < L.length; i += 4) { const a = L[i], b = R[i]; side += (a - b) * (a - b); mid += (a + b) * (a + b); }
+    return mid > 0 && side / mid > 0.02;
   },
 
-  out(c, vol) {
-    this.stop();
-    const g = c.createGain(); g.gain.value = vol;
-    g.connect(c.destination);
-    return g;
+  // Singer hatao → sirf music (ek baar banta hai, phir yaad rehta hai)
+  async musicOnly(seg) {
+    if (seg.music) return seg.music;
+    const b = seg.buf;
+    const off = new OfflineAudioContext(2, b.length, b.sampleRate);
+    const src = off.createBufferSource(); src.buffer = b;
+    const sp = off.createChannelSplitter(2);
+    src.connect(sp);
+    const bq = (type, f, q = 0.7) => { const x = off.createBiquadFilter(); x.type = type; x.frequency.value = f; x.Q.value = q; return x; };
+    const G = (v) => { const g = off.createGain(); g.gain.value = v; return g; };
+    // Side = L − R  (singer gayab, instruments bache)
+    const l = G(1), r = G(-1), side = G(1);
+    sp.connect(l, 0); sp.connect(r, 1); l.connect(side); r.connect(side);
+    const sideHp = bq("highpass", 130);
+    side.connect(sideHp);
+    // Bass + kick wapas (center mein hote hain) — 150 Hz ke neeche ka hissa
+    const ml = G(0.5), mr = G(0.5), mid = G(1);
+    sp.connect(ml, 0); sp.connect(mr, 1); ml.connect(mid); mr.connect(mid);
+    const bassLp = bq("lowpass", 150), bass = G(0.95);
+    mid.connect(bassLp); bassLp.connect(bass);
+    // Hi-hat / chamak (10k+), singer wahan nahi hota
+    const airHp = bq("highpass", 10000), air = G(0.5);
+    mid.connect(airHp); airHp.connect(air);
+    const sum = G(1);
+    sideHp.connect(sum); bass.connect(sum); air.connect(sum);
+    // Halka stereo feel: dono kaan mein thoda alag delay
+    const merger = off.createChannelMerger(2);
+    const dl = off.createDelay(0.05); dl.delayTime.value = 0.012;
+    sum.connect(merger, 0, 0); sum.connect(dl); dl.connect(merger, 0, 1);
+    const comp = off.createDynamicsCompressor();
+    comp.threshold.value = -20; comp.ratio.value = 3;
+    merger.connect(comp); comp.connect(off.destination);
+    src.start();
+    const outBuf = await off.startRendering();
+    // Awaaz barabar karo (L−R aksar dheema hota hai)
+    let peak = 0;
+    for (let ch = 0; ch < 2; ch++) { const d = outBuf.getChannelData(ch); for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > peak) peak = v; } }
+    const k = peak > 0 ? 0.9 / peak : 1;
+    for (let ch = 0; ch < 2; ch++) { const d = outBuf.getChannelData(ch); for (let i = 0; i < d.length; i++) d[i] *= k; }
+    return (seg.music = outBuf);
   },
-  playNotes(notes, voice) {
-    const c = actx();
-    if (!c || !notes.length) return 0;
-    const out = this.out(c, 0.9);
-    const t0 = c.currentTime + 0.08, V = VOICES[voice] || VOICES.nokia;
-    let prev = null;
-    notes.forEach((n) => {
-      const f = mtof(n.m);
-      V(c, out, t0 + n.t, Math.max(0.08, n.d), f, prev);
-      prev = { f, end: t0 + n.t + n.d };
-    });
-    const last = notes[notes.length - 1];
-    this.playing = { out };
-    return last.t + last.d + 0.3;
-  },
-  async playSpeaker(t, len, fx) {
-    const c = actx();
+
+  // Gaane ki ringtone tayyar karo → { buf, kind: "music" | "original" }
+  async prepare(t, len) {
     const seg = await this.segment(t, len);
-    let buf = seg.buf;
-    if (fx === "ulta") {
-      if (!seg.rev) {
-        seg.rev = c.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
-        for (let ch = 0; ch < buf.numberOfChannels; ch++) seg.rev.getChannelData(ch).set(Array.prototype.slice.call(buf.getChannelData(ch)).reverse());
-      }
-      buf = seg.rev;
+    if (seg.stereo === null) seg.stereo = this.isStereo(seg.buf);
+    const key = ringKey(t);
+    if (t.vrKey !== key || t.vr !== (seg.stereo ? "ok" : "mono")) {
+      await updateTrack(t.id, { vr: seg.stereo ? "ok" : "mono", vrKey: key });
     }
-    const out = this.out(c, 0.8);
-    const src = c.createBufferSource(); src.buffer = buf;
-    const rate = fx === "fast" ? 1.3 : 1;
-    src.playbackRate.value = rate;
-    const hp = c.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 850; hp.Q.value = 0.8;
-    const lp = c.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 3300;
-    const pk = c.createBiquadFilter(); pk.type = "peaking"; pk.frequency.value = 1800; pk.gain.value = 9; pk.Q.value = 1.2;
-    const sh = c.createWaveShaper();
-    const curve = new Float32Array(1024);
-    for (let i = 0; i < 1024; i++) { const x = (i / 1023) * 2 - 1; curve[i] = Math.tanh(x * 3) / Math.tanh(3); }
-    sh.curve = curve;
-    const pre = c.createGain(); pre.gain.value = 1.4;
-    src.connect(hp); hp.connect(lp); lp.connect(pk); pk.connect(pre); pre.connect(sh); sh.connect(out);
+    if (!seg.stereo || t.ringOk === false) return { buf: seg.buf, kind: "original" };
+    return { buf: await this.musicOnly(seg), kind: "music" };
+  },
+
+  // Ringtone jaisa bajao: fade-in → bajta → fade-out
+  playBuffer(buf, len) {
+    const c = actx();
+    this.stop();
+    const out = c.createGain();
+    out.connect(c.destination);
     const play = Math.min(len, buf.duration);
-    src.start(c.currentTime + 0.05, 0, play);
+    const t = c.currentTime + 0.05;
+    out.gain.setValueAtTime(0.0001, t);
+    out.gain.linearRampToValueAtTime(1, t + 0.35);
+    out.gain.setValueAtTime(1, t + Math.max(0.4, play - 0.7));
+    out.gain.linearRampToValueAtTime(0.0001, t + play);
+    const src = c.createBufferSource(); src.buffer = buf;
+    src.connect(out);
+    src.start(t, 0, play);
     this.playing = { out, src };
-    return play / rate + 0.1;
+    return play + 0.1;
   },
   // Phone vibrate (ringtone se pehle "brrr brrr")
   vibrate() {
@@ -485,7 +334,9 @@ const ring = {
       const t = c.currentTime + 0.02 + dt;
       const o = c.createOscillator(); o.type = "square"; o.frequency.value = 55;
       const lp = c.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 400;
-      const e = envGain(c, t, 0.01, 0.2, 0.03, 0.12);
+      const e = c.createGain();
+      e.gain.setValueAtTime(0.0001, t); e.gain.linearRampToValueAtTime(0.12, t + 0.01);
+      e.gain.setValueAtTime(0.12, t + 0.21); e.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
       o.connect(lp); lp.connect(e); e.connect(c.destination); o.start(t); o.stop(t + 0.3);
     });
   },
@@ -493,7 +344,7 @@ const ring = {
     const p = this.playing;
     this.playing = null;
     if (!p) return;
-    try { const c = music.ctx; p.out.gain.setTargetAtTime(0, c.currentTime, 0.03); } catch (e) {}
+    try { const c = music.ctx; p.out.gain.cancelScheduledValues(c.currentTime); p.out.gain.setTargetAtTime(0, c.currentTime, 0.03); } catch (e) {}
     setTimeout(() => { try { if (p.src) p.src.stop(); } catch (e) {} try { p.out.disconnect(); } catch (e) {} }, 220);
   }
 };
@@ -501,9 +352,6 @@ const ring = {
 // ---------- State ----------
 const state = {
   settings: {
-    mode: CONFIG.DEFAULT_MODE || "ringtune",
-    voice: CONFIG.DEFAULT_VOICE || "nokia",
-    fx: "normal",
     count: CONFIG.DEFAULT_COUNT,
     clip: CONFIG.DEFAULT_CLIP,
     lang: "Mix",
@@ -522,10 +370,11 @@ function playableSongs() {
 function ringKey(t) { return (hasStart(t.start) ? +t.start : "a") + "|" + state.settings.clip; }
 function ringStatus(t) {
   if (broken.has(t.id)) return "❌ File nahi chali";
-  if (!t.notes || t.notesKey !== ringKey(t)) return "— abhi bani nahi";
-  if (t.ringOk === false) return "📢 Speaker mode";
-  if (t.ringOk === true) return `✅ OK (${t.notes.length} sur)`;
-  return `🎵 ${t.notes.length} sur — suno & ✅ karo`;
+  if (!t.vr || t.vrKey !== ringKey(t)) return "— abhi bani nahi";
+  if (t.vr === "mono") return "⚠️ Mono file — original bajega";
+  if (t.ringOk === false) return "🎤 Original (singer ke saath)";
+  if (t.ringOk === true) return "✅ OK — sirf music";
+  return "🎵 Bani — suno & ✅ karo";
 }
 
 // ---------- Navigation ----------
@@ -557,22 +406,16 @@ $$(".tab").forEach((t) => t.addEventListener("click", () => {
 // ---------- Setup ----------
 function renderSetup() {
   const S = state.settings;
-  setSeg("#modeSeg", S.mode);
-  setSeg("#voiceSeg", S.voice);
-  setSeg("#fxSeg", S.fx);
   setSeg("#countSeg", S.count);
   setSeg("#clipSeg", S.clip);
   setSeg("#langSeg", S.lang);
   setSeg("#replaySeg", S.replay);
-  $("#voiceRow").classList.toggle("hidden", S.mode === "speaker");
-  $("#fxRow").classList.toggle("hidden", S.mode === "ringtune");
 
   const pool = playableSongs();
-  const ready = pool.filter((t) => t.notes && t.notesKey === ringKey(t) && t.ringOk !== false).length;
+  const ready = pool.filter((t) => t.vr && t.vrKey === ringKey(t)).length;
   $("#songCountInfo").textContent = localTracks.length
     ? `🎵 ${pool.length} gaane ready · ${ready} ki ringtone pehle se bani hai (baaki game mein khud banegi). Bina internet chalega.`
     : `📁 Abhi koi gaana nahi. "Gaane" tab mein mp3 files daalo.`;
-  $("#voiceNow").textContent = `Abhi ki awaaz: ${VOICE_NAMES[S.voice]} (Game tab ki settings se badlo)`;
 }
 function setSeg(sel, val) {
   $$(sel + " button").forEach((b) => b.classList.toggle("on", String(b.dataset.v) === String(val)));
@@ -587,23 +430,11 @@ function bindSeg(sel, key, isNum, after) {
     if (after) after();
   });
 }
-bindSeg("#modeSeg", "mode", false);
-bindSeg("#voiceSeg", "voice", false, () => demoVoice());
-bindSeg("#fxSeg", "fx", false);
 bindSeg("#countSeg", "count", true);
 bindSeg("#clipSeg", "clip", true);
 bindSeg("#langSeg", "lang", false);
 bindSeg("#replaySeg", "replay", true);
 $("#startBtn").addEventListener("click", startGame);
-$("#voiceDemo").addEventListener("click", () => demoVoice());
-
-// Awaaz ka sample (koi gaana nahi — bas ek chhoti si dhun)
-function demoVoice() {
-  const m = [76, 74, 72, 74, 76, 79, 76, 72, 74];
-  const notes = m.map((x, i) => ({ t: i * 0.22, d: i === m.length - 1 ? 0.6 : 0.2, m: x }));
-  ring.playNotes(notes, state.settings.voice);
-}
-
 // ---------- Game (koi team nahi — phone bajao, sab milke pehchano) ----------
 let stopTimer, tickTimer, revealTimer;
 const audio = $("#localAudio");
@@ -686,8 +517,7 @@ function renderGame() {
   if (!g) return;
   const no = g.phase === "reveal" ? g.done : g.done + 1;
   $("#songNo").textContent = `Call ${Math.min(Math.max(1, no), g.total)} / ${g.total}`;
-  const kind = g.kind || (state.settings.mode === "speaker" ? "speaker" : "ringtune");
-  $("#modeBadge").textContent = g.phase === "ready" ? "" : kind === "speaker" ? "📢 Phone speaker" + (state.settings.fx !== "normal" ? (state.settings.fx === "ulta" ? " · 🔄 Ulta" : " · ⏩ Fast") : "") : "🔔 Ringtone · " + VOICE_NAMES[state.settings.voice].split(" ").slice(1).join(" ");
+  $("#modeBadge").textContent = !g.kind || g.phase === "ready" || g.phase === "loading" ? "" : g.kind === "music" ? "🎵 Sirf music" : "🎤 Original";
 
   const phone = $("#phone");
   phone.classList.toggle("ringing", g.phase === "ringing");
@@ -811,9 +641,8 @@ function playNewSong() {
   g.played.add(s.id);
   g.replaysLeft = state.settings.replay;
   g.hint = false;
-  const m = state.settings.mode;
-  g.kind = m === "speaker" ? "speaker" : m === "ringtune" ? "ringtune" : (Math.random() < 0.5 ? "ringtune" : "speaker");
-  if (g.kind === "ringtune" && s.ringOk === false) g.kind = "speaker";
+  g.kind = null;
+  g.buf = null;
   startRing();
 }
 
@@ -827,16 +656,12 @@ async function startRing() {
   g.phase = "loading";
   renderGame();
   const clip = state.settings.clip;
-  let notes = null;
   try {
-    if (g.kind === "ringtune") {
-      notes = await ring.melody(g.song, clip);
-      if (notes.length < 6) {
-        g.kind = "speaker";
-        toast("Is gaane ki dhun saaf nahi nikli — phone speaker se baj raha hai", 3000);
-      }
+    if (!g.buf) {
+      const r = await ring.prepare(g.song, clip);
+      g.buf = r.buf;
+      g.kind = r.kind;
     }
-    if (g.kind === "speaker") await ring.segment(g.song, clip);
   } catch (e) {
     if (my !== g.token) return;
     return onSongFail();
@@ -850,7 +675,7 @@ async function startRing() {
   if (my !== g.token) return;
   let dur;
   try {
-    dur = g.kind === "ringtune" ? ring.playNotes(notes, state.settings.voice) : await ring.playSpeaker(g.song, clip, state.settings.fx);
+    dur = ring.playBuffer(g.buf, clip);
   } catch (e) { return onSongFail(); }
   if (my !== g.token) { ring.stop(); return; }
   runCountdown(dur);
@@ -860,10 +685,9 @@ async function startRing() {
 async function playRingOnly() {
   const g = state.game;
   if (!g || !g.song) return;
-  const clip = state.settings.clip;
   try {
-    if (g.kind === "ringtune" && g.song.notes) ring.playNotes(g.song.notes, state.settings.voice);
-    else await ring.playSpeaker(g.song, clip, state.settings.fx);
+    if (!g.buf) g.buf = (await ring.prepare(g.song, state.settings.clip)).buf;
+    ring.playBuffer(g.buf, state.settings.clip);
   } catch (e) { toast("Ringtone nahi chali"); }
 }
 
@@ -964,7 +788,7 @@ function renderLocalTable() {
         <button data-lring="${t.id}" title="Ringtone suno">🔔</button>
         <button data-lorig="${t.id}" title="Asli gaana suno (5 sec)">🔊</button>
         <button data-lok="${t.id}" title="Ringtone theek hai" class="${t.ringOk === true ? "on" : ""}">✅</button>
-        <button data-lbad="${t.id}" title="Ringtone bekaar — speaker mode" class="${t.ringOk === false ? "on" : ""}">❌</button>
+        <button data-lbad="${t.id}" title="Vocals theek se nahi hate — original (singer ke saath) bajao" class="${t.ringOk === false ? "on" : ""}">❌</button>
         <button data-ldel="${t.id}" title="Hatao">🗑</button>
       </div></td>
     </tr>`).join("");
@@ -990,7 +814,7 @@ $("#localTable").addEventListener("change", (e) => {
   if (c.contains("f-movie")) updateTrack(id, { movie: e.target.value.trim() });
   if (c.contains("f-lang")) updateTrack(id, { lang: e.target.value }).then(renderSetup);
   if (c.contains("f-start")) {
-    updateTrack(id, { start: e.target.value === "" ? null : Math.max(0, +e.target.value), notes: null, notesKey: null, ringOk: null }).then(() => renderRow(id));
+    updateTrack(id, { start: e.target.value === "" ? null : Math.max(0, +e.target.value), vr: null, vrKey: null }).then(() => renderRow(id));
   }
 });
 $("#localTable").addEventListener("click", async (e) => {
@@ -1004,11 +828,13 @@ $("#localTable").addEventListener("click", async (e) => {
     const st = tr.querySelector(".status");
     st.textContent = "⏳ Ringtone ban rahi hai…";
     try {
-      const notes = await ring.melody(t, state.settings.clip);
+      const seg = await ring.segment(t, state.settings.clip);
+      const r = await ring.prepare(t, state.settings.clip);
+      // Gaane tab mein hamesha "sirf music" sunao (❌ laga ho tab bhi), taaki farak samajh aaye
+      const buf = r.kind === "original" && seg.stereo ? await ring.musicOnly(seg) : r.buf;
       renderRow(t.id);
-      if (notes.length < 6) return toast("Is gaane ki dhun saaf nahi nikli — Start second badal ke try karo, warna speaker mode chalega", 4000);
-      ring.playNotes(notes, state.settings.voice);
-      toast(`🔔 ${t.title} — ${VOICE_NAMES[state.settings.voice]}`);
+      ring.playBuffer(buf, state.settings.clip);
+      toast(seg.stereo ? `🎵 ${t.title} — sirf music` : `⚠️ ${t.title} mono file hai — singer nahi hat sakta, original bajega`, 3500);
     } catch (err) {
       broken.add(t.id);
       renderRow(t.id);
@@ -1072,21 +898,21 @@ $("#buildAllBtn").addEventListener("click", async () => {
   if (!localTracks.length) return toast("Pehle gaane daalo");
   stopAudio();
   btn.disabled = true;
-  const list = localTracks.filter((t) => !(t.notes && t.notesKey === ringKey(t)));
+  const list = localTracks.filter((t) => !(t.vr && t.vrKey === ringKey(t)));
   let ok = 0, weak = 0;
   for (let i = 0; i < list.length; i++) {
     btn.textContent = `⏳ Ban rahi hai ${i + 1}/${list.length}…`;
     try {
-      const n = await ring.melody(list[i], state.settings.clip);
-      if (n.length >= 6) ok++; else weak++;
+      const r = await ring.prepare(list[i], state.settings.clip);
+      if (r.kind === "music") ok++; else weak++;
     } catch (e) { broken.add(list[i].id); weak++; }
     renderRow(list[i].id);
     await sleep(30);
   }
   btn.disabled = false;
-  btn.textContent = "🔔 Sab ki ringtone banao";
+  btn.textContent = "🎵 Sab ki ringtone banao";
   renderSetup();
-  toast(list.length ? `Ho gaya: ${ok} ringtone bani, ${weak} pe speaker mode chalega. Ab 🔔 se sun ke ✅ karo.` : "Sab ki ringtone pehle se bani hai ✅", 4500);
+  toast(list.length ? `Ho gaya: ${ok} gaano ki "sirf music" ringtone bani${weak ? `, ${weak} mono/❌ (original bajega)` : ""}. Ab 🔔 se sun ke ✅ / ❌ karo.` : "Sab ki ringtone pehle se bani hai ✅", 4500);
 });
 
 // ---------- Fireworks ----------
