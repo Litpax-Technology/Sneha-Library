@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Gaana Pehchano — Diwali Night</title>
+  <title>Ringtune Pehchano — Diwali Night</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Mukta:wght@400;600;700;800&family=Yatra+One&family=Cormorant+Garamond:ital,wght@1,500;1,600&display=swap" rel="stylesheet">
@@ -17,7 +17,7 @@
     <div class="splash-inner">
       <div class="diya" style="--d:.4s"><i class="flame"></i></div>
       <p class="kicker">Diwali Night Special</p>
-      <h1 id="splashTitle" class="gold-text">Gaana Pehchano</h1>
+      <h1 id="splashTitle" class="gold-text">Ringtune Pehchano</h1>
       <button id="splashBtn" class="btn big">🪔 Tap karke shuru karo</button>
       <p class="muted small hint">🔊 Awaaz on rakho — kahani music ke saath hai</p>
     </div>
@@ -48,10 +48,10 @@
   <div class="app">
     <div class="toran" aria-hidden="true"></div>
     <header class="topbar">
-      <div class="brand">🪔 <span id="appName" class="gold-text">Gaana Pehchano</span></div>
+      <div class="brand">📱 <span id="appName" class="gold-text">Ringtune Pehchano</span></div>
       <nav class="tabs">
-        <button class="tab active" data-nav="game">🎶 Game</button>
-        <button class="tab" data-nav="songs">🎵 Songs</button>
+        <button class="tab active" data-nav="game">🔔 Game</button>
+        <button class="tab" data-nav="songs">🎵 Gaane</button>
         <button class="tab" data-nav="intro" title="Kahani dobara chalao">🎬</button>
       </nav>
     </header>
@@ -62,10 +62,32 @@
         <div class="card setup-card">
           <h2>Party settings</h2>
           <div class="setting">
-            <label>Gaane kahan se</label>
-            <div class="seg" id="sourceSeg">
-              <button data-v="local">📁 Meri files</button>
-              <button data-v="youtube">▶ YouTube</button>
+            <label>Kaise bajega</label>
+            <div class="seg" id="modeSeg">
+              <button data-v="ringtune">🔔 Ringtone</button>
+              <button data-v="speaker">📢 Phone speaker</button>
+              <button data-v="mix">🎲 Mix</button>
+            </div>
+          </div>
+          <div class="setting" id="voiceRow">
+            <label>Ringtone ki awaaz</label>
+            <div class="row wrap">
+              <div class="seg" id="voiceSeg">
+                <button data-v="nokia">📱 Nokia</button>
+                <button data-v="marimba">🎹 Marimba</button>
+                <button data-v="bit8">👾 8-bit</button>
+                <button data-v="bansuri">🪈 Bansuri</button>
+                <button data-v="seeti">😗 Seeti</button>
+              </div>
+              <button id="voiceDemo" class="btn ghost small" title="Is awaaz ka sample suno">▶ Suno</button>
+            </div>
+          </div>
+          <div class="setting" id="fxRow">
+            <label>Speaker twist</label>
+            <div class="seg" id="fxSeg">
+              <button data-v="normal">Normal</button>
+              <button data-v="ulta">🔄 Ulta</button>
+              <button data-v="fast">⏩ Fast</button>
             </div>
           </div>
           <div class="setting">
@@ -78,10 +100,10 @@
             </div>
           </div>
           <div class="setting">
-            <label>Tune kitni der bajegi</label>
+            <label>Ringtone kitni lambi</label>
             <div class="seg" id="clipSeg">
-              <button data-v="5">5 sec</button>
-              <button data-v="10">10 sec</button>
+              <button data-v="8">8 sec</button>
+              <button data-v="12">12 sec</button>
             </div>
           </div>
           <div class="setting">
@@ -102,7 +124,7 @@
           </div>
           <p id="songCountInfo" class="muted small"></p>
         </div>
-        <button id="startBtn" class="btn big">🎶 Game shuru karo</button>
+        <button id="startBtn" class="btn big">📞 Game shuru karo</button>
       </section>
 
       <!-- ===== GAME ===== -->
@@ -110,82 +132,57 @@
         <div class="deck">
           <div class="deck-head">
             <span id="songNo" class="pill"></span>
+            <span id="modeBadge" class="mode-badge"></span>
             <button id="endGameBtn" class="btn ghost small">🎆 Party khatam</button>
           </div>
 
-          <div class="turntable">
-            <div id="record" class="record"><div class="label"><span>🪔</span></div></div>
-            <div id="tonearm" class="tonearm"></div>
+          <div class="phone-wrap">
+            <div id="phone" class="phone">
+              <div id="phoneScreen" class="phone-screen"></div>
+            </div>
           </div>
-
-          <div id="countdown" class="countdown"></div>
           <div class="progress"><div id="progressBar"></div></div>
 
           <div id="status" class="status-line"></div>
           <div id="reveal" class="reveal hidden"></div>
           <div id="controls" class="controls"></div>
+          <p class="muted small keys-hint">⌨️ Space = agla step · H = hint · Esc = rok do</p>
         </div>
       </section>
 
-      <!-- ===== SONGS ===== -->
+      <!-- ===== GAANE ===== -->
       <section id="screen-songs" class="screen">
         <div class="card">
           <div class="songs-head">
-            <h2>📁 Meri instrumental files <span id="localSummary" class="muted small"></span></h2>
+            <h2>🎵 Party ke gaane <span id="localSummary" class="muted small"></span></h2>
             <div class="row wrap">
               <label class="btn">＋ Files chuno<input id="fileInput" type="file" accept="audio/*" multiple hidden></label>
               <label class="btn ghost">📂 Poora folder<input id="folderInput" type="file" webkitdirectory multiple hidden></label>
               <select id="uploadLang" class="inline-select" aria-label="Nayi files ki language">
-                <option value="auto">Language: auto</option>
                 <option>Hindi</option>
                 <option>Punjabi</option>
               </select>
             </div>
           </div>
           <p class="muted small">
-            Bina ads aur bina internet chalega. Instrumental mp3 files chuno — file ka naam
-            <b>"Gaana - Singer.mp3"</b> rakhoge toh naam aur singer khud bhar jayenge. Files sirf isi laptop ke browser mein save rehti hain, kahin upload nahi hoti.
+            Gaano ki mp3 files chuno. File ka naam <b>"Gaana - Singer - Movie.mp3"</b> rakhoge toh teeno khud bhar jayenge (movie hint mein kaam aati hai).
+            Files sirf isi laptop ke browser mein save rehti hain, kahin upload nahi hoti.
+          </p>
+          <div class="ring-tools">
+            <button id="buildAllBtn" class="btn">🔔 Sab ki ringtone banao</button>
+            <span id="voiceNow" class="muted small"></span>
+          </div>
+          <p class="muted small">
+            🔔 dabao → ringtone suno → pehchan mein aaye toh <b>✅</b>, bekaar lage toh <b>❌</b> (us gaane pe phone speaker mode chalega).
+            Tip: instrumental / flute / piano version se ringtone sabse saaf banti hai. Chorus kis second pe hai woh "Start" mein daal do.
           </p>
           <div class="table-wrap">
             <table id="localTable">
               <thead>
-                <tr><th>#</th><th>Gaana</th><th>Singer</th><th>Lang</th><th>Start (sec)</th><th>Status</th><th></th></tr>
+                <tr><th>#</th><th>Gaana</th><th>Singer</th><th>Movie</th><th>Lang</th><th>Start (sec)</th><th>Ringtone</th><th></th></tr>
               </thead>
               <tbody></tbody>
             </table>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="songs-head">
-            <h2>▶ YouTube links <span id="songsSummary" class="muted small"></span></h2>
-            <div class="row wrap">
-              <button id="checkAllBtn" class="btn">✅ Sab check karo</button>
-              <button id="copyConfigBtn" class="btn ghost">📋 Config copy karo</button>
-              <button id="resetChangesBtn" class="btn ghost danger">↺ Changes reset</button>
-            </div>
-          </div>
-          <p class="muted small">
-            🔍 dabao → YouTube pe <b>instrumental</b> version dhundho → link paste karo. Ad aaye toh app awaaz mute karke ad khatam hone ka wait karega.
-            Hamesha ke liye: "Config copy karo" → <b>config.js</b> mein SONGS wala hissa replace.
-          </p>
-          <div class="table-wrap">
-            <table id="songTable">
-              <thead>
-                <tr><th>#</th><th>Gaana</th><th>Lang</th><th>YouTube link</th><th>Start (sec)</th><th>Status</th><th></th></tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
-          <h3 class="sub-h">➕ Naya YouTube gaana</h3>
-          <div class="form-grid">
-            <input id="newTitle" type="text" placeholder="Gaane ka naam *">
-            <input id="newSinger" type="text" placeholder="Singer">
-            <input id="newMovie" type="text" placeholder="Movie / Album">
-            <select id="newLang"><option>Hindi</option><option>Punjabi</option></select>
-            <input id="newLink" type="text" placeholder="YouTube link *">
-            <input id="newStart" type="number" min="0" placeholder="Start sec (optional)">
-            <button id="addSongBtn" class="btn">+ Add song</button>
           </div>
         </div>
       </section>
@@ -193,11 +190,9 @@
   </div>
 
   <audio id="localAudio" preload="auto"></audio>
-  <div id="ytHolder"><div id="yt"></div></div>
   <div id="toast" class="toast"></div>
 
   <script src="config.js"></script>
   <script src="app.js"></script>
-  <script src="https://www.youtube.com/iframe_api"></script>
 </body>
 </html>
