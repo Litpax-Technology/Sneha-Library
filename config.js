@@ -9,7 +9,21 @@ const CONFIG = {
   DEFAULT_COUNT: 15,          // ek game mein kitne gaane (10 / 15 / 20 / 0 = sab)
   REPLAY_LIMIT: 1,            // ek ringtone kitni baar dobara
   REVEAL_CLIP: 15,            // answer ke baad asli gaana kitne second bajega
-  AUTO_START: 0.3             // Start khali ho toh gaane ke kitne hisse se (0.3 = 30% pe, aksar chorus ke paas)
+  AUTO_START: 0.3,            // Start khali ho toh gaane ke kitne hisse se (0.3 = 30% pe, aksar chorus ke paas)
+
+  // "Language: Auto" mein in singers ke gaane Punjabi maane jayenge (naya naam jodna ho toh yahan likh do)
+  PUNJABI_SINGERS: [
+    "Karan Aujla", "Sidhu Moose Wala", "Sidhu Moosewala", "Diljit Dosanjh", "AP Dhillon", "Gurinder Gill", "Shinda Kahlon",
+    "Guru Randhawa", "Param Singh", "Kamal Kahlon", "Bohemia", "Jass Manak", "Ammy Virk", "B Praak", "Shubh",
+    "Babbu Maan", "Gippy Grewal", "Harrdy Sandhu", "Mankirt Aulakh", "Arjan Dhillon", "Amrit Maan", "Jassie Gill",
+    "Garry Sandhu", "Gurnam Bhullar", "Satinder Sartaaj", "Prem Dhillon", "R Nait", "Nirvair Pannu", "Tegi Pannu",
+    "Ninja", "Parmish Verma", "Sharry Maan", "Jordan Sandhu", "Hardy Sandhu", "Sukh-E", "Dilpreet Dhillon", "Intense"
+  ],
+  // Hindi singers (file ke naam mein singer chipka ho toh alag karne ke kaam aata hai)
+  OTHER_SINGERS: [
+    "Arijit Singh", "Shreya Ghoshal", "Atif Aslam", "Jubin Nautiyal", "Neha Kakkar", "Badshah", "Honey Singh", "Yo Yo Honey Singh",
+    "Sonu Nigam", "KK", "Vishal Mishra", "Darshan Raval", "Armaan Malik", "Mohit Chauhan", "Shankar Mahadevan", "Sunidhi Chauhan"
+  ]
 };
 
 // ===== Diwali party: intro story + ending =====
