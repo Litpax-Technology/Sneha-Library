@@ -62,13 +62,15 @@
         <div class="card setup-card">
           <h2>Party settings</h2>
           <div class="setting">
-            <label>Ghantiyan</label>
-            <div class="seg" id="ladderSeg">
-              <button data-v="steps">📞📞📞 3 ghanti (music → halki awaaz → original)</button>
-              <button data-v="original">🎤 Seedha original</button>
+            <label>Gaana kahan se bajega</label>
+            <div class="seg" id="posSeg">
+              <button data-v="start">🎬 Shuru</button>
+              <button data-v="mid">🎯 Beech</button>
+              <button data-v="end">🏁 End</button>
+              <button data-v="random">🎲 Random</button>
             </div>
           </div>
-          <p class="muted small setup-note">Ghanti 1 = sirf music (sabse mushkil, pehchane toh ⭐ star) · Ghanti 2 = singer ki halki awaaz · Ghanti 3 = poora original. Gaane ka chorus app khud dhoondhta hai.</p>
+          <p class="muted small setup-note">Asli gaana bajega, bina kisi chhed-chhad ke. Kisi gaane ka khaas hissa bajana ho toh "Gaane" tab mein us gaane ka "Start (sec)" bhar do — woh is setting se upar chalega.</p>
           <div class="setting">
             <label>Kitne gaane</label>
             <div class="seg" id="countSeg">
@@ -79,10 +81,11 @@
             </div>
           </div>
           <div class="setting">
-            <label>Ringtone kitni lambi</label>
+            <label>Kitni der bajega</label>
             <div class="seg" id="clipSeg">
-              <button data-v="8">8 sec</button>
-              <button data-v="12">12 sec</button>
+              <button data-v="5">5 sec</button>
+              <button data-v="10">10 sec</button>
+              <button data-v="15">15 sec</button>
             </div>
           </div>
           <div class="setting">
@@ -93,7 +96,7 @@
               <button data-v="Punjabi">Punjabi</button>
             </div>
           </div>
-          <div class="setting" id="replayRow">
+          <div class="setting">
             <label>Dobara sunna</label>
             <div class="seg" id="replaySeg">
               <button data-v="0">Nahi</button>
@@ -125,7 +128,7 @@
           <div id="status" class="status-line"></div>
           <div id="reveal" class="reveal hidden"></div>
           <div id="controls" class="controls"></div>
-          <p class="muted small keys-hint">⌨️ Space = agla step · H = hint · Esc = rok do</p>
+          <p class="muted small keys-hint">⌨️ Space = agla step · H = hint · R = dobara · Esc = rok do</p>
         </div>
       </section>
 
@@ -145,23 +148,17 @@
             </div>
           </div>
           <p class="muted small">
-            Gaano ki mp3 files chuno. Naam, singer aur album file ke andar se khud bhar jaate hain, "(RiskyJatt.Com)" jaise site ke naam hat jaate hain.
-            <br><b>🎼 Best result:</b> UVR5 se bani <b>Instrumental</b> files bhi isi folder mein rakh do — app naam se khud original ke saath jod dega (ghanti 1 mein wahi bajegi). "Vocals" wali files apne aap chhod di jaati hain.
+            Gaano ki mp3 files chuno. Naam, singer aur album file ke andar se khud bhar jaate hain, "(RiskyJatt.Com)" jaise site ke naam hat jaate hain. Kuch galat ho toh table mein seedha badal do.
             Files sirf isi laptop ke browser mein save rehti hain, kahin upload nahi hoti.
           </p>
           <div class="ring-tools">
-            <button id="buildAllBtn" class="btn">🎵 Sab ki ringtone banao</button>
             <button id="fillTagsBtn" class="btn ghost" title="Pehle se daale gaano mein khaali singer/movie file se bharo">🏷 Naam/singer file se bharo</button>
           </div>
-          <p class="muted small">
-            🔔 = ghanti 1 wala music suno · 🔊 = asli gaana · 🎼 = instrumental file haath se jodo.
-            Jin gaano mein instrumental nahi hai, unme app khud singer halka karta hai — wahan music bekaar lage toh <b>❌</b> (pehli ghanti halki awaaz se bajegi).
-            Chorus galat jagah se lage toh "Start" mein sahi second daal do.
-          </p>
+          <p class="muted small">▶ = jaise game mein bajega waise suno · "Start (sec)" khaali = Game tab ki setting (Shuru / Beech / End / Random) chalegi.</p>
           <div class="table-wrap">
             <table id="localTable">
               <thead>
-                <tr><th>#</th><th>Gaana</th><th>Singer</th><th>Movie</th><th>Lang</th><th>Start (sec)</th><th>Ringtone</th><th></th></tr>
+                <tr><th>#</th><th>Gaana</th><th>Singer</th><th>Movie</th><th>Lang</th><th>Start (sec)</th><th></th></tr>
               </thead>
               <tbody></tbody>
             </table>
@@ -172,7 +169,6 @@
   </div>
 
   <audio id="localAudio" preload="auto"></audio>
-  <input id="instInput" type="file" accept="audio/*" hidden>
   <div id="toast" class="toast"></div>
 
   <script src="config.js"></script>
