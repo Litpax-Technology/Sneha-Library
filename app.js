@@ -171,29 +171,62 @@ async function smartInfo(file) {
   return { title: title || "Bina naam", singer, movie };
 }
 
+// Instrumental / vocals file pehchano (UVR naam aise deta hai: "1_Gaana_(Instrumental).wav")
+const INST_RX = /(instrumental|karaoke|no[\s_-]*vocals?|without[\s_-]*vocals?|music[\s_-]*only|minus[\s_-]*one|backing[\s_-]*track)/i;
+const VOCAL_RX = /(\(|_|\s|^)(vocals?|acapella|acappella)(\)|_|\s|\.|$)/i;
+function matchKey(name) {
+  let b = String(name || "").replace(/\.[a-z0-9]{2,5}$/i, "").replace(/^\d+_/, "");
+  b = b.replace(INST_RX, " ").replace(/\b(vocals?)\b/gi, " ");
+  return normTxt(cleanName(b));
+}
+function trackKey(t) { return t.mkey || matchKey(t.file); }
+
+async function attachInstrumental(t, f) {
+  await idb.put("blobs", { id: t.id + "_inst", blob: f });
+  ring.forget(t.id);
+  if (urlCache[t.id + "_inst"]) { URL.revokeObjectURL(urlCache[t.id + "_inst"]); delete urlCache[t.id + "_inst"]; }
+  await updateTrack(t.id, { hasInst: true, instFile: f.name, vr: null, vrKey: null });
+}
+
 async function addFiles(fileList) {
   const files = [...fileList].filter((f) => (f.type || "").startsWith("audio/") || /\.(mp3|m4a|aac|wav|ogg|opus|flac|webm)$/i.test(f.name));
   if (!files.length) return toast("Isme koi audio file nahi mili");
   const langPick = $("#uploadLang").value;
-  let added = 0;
-  for (const f of files) {
+  const insts = files.filter((f) => INST_RX.test(f.name));
+  const vocalsOnly = files.filter((f) => !INST_RX.test(f.name) && VOCAL_RX.test(f.name.replace(/\.[a-z0-9]{2,5}$/i, "")));
+  const origs = files.filter((f) => !insts.includes(f) && !vocalsOnly.includes(f));
+  let added = 0, paired = 0, lone = 0;
+  const addOne = async (f) => {
     const p = await smartInfo(f);
     const lang = langPick === "auto" ? guessLang(p.singer, f.name) : langPick;
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    const meta = { id, added: Date.now() + added, file: f.name, title: p.title, singer: p.singer, movie: p.movie, lang, start: null, vr: null, vrKey: null, ringOk: null };
-    try {
-      await idb.put("blobs", { id, blob: f });
-      await idb.put("meta", meta);
-      added++;
-    } catch (e) {
-      toast("Browser mein jagah kam pad gayi — kuch files add nahi hui", 4000);
-      break;
+    const meta = { id, added: Date.now() + added, file: f.name, mkey: matchKey(f.name), title: p.title, singer: p.singer, movie: p.movie, lang, start: null, vr: null, vrKey: null, ringOk: null, hasInst: false };
+    await idb.put("blobs", { id, blob: f });
+    await idb.put("meta", meta);
+    added++;
+  };
+  try {
+    for (const f of origs) await addOne(f);
+    await loadLocalTracks();
+    // Instrumental ko uske original se jodo (naam se)
+    for (const f of insts) {
+      const key = matchKey(f.name);
+      const t = key && localTracks.find((x) => trackKey(x) === key);
+      if (t) { await attachInstrumental(t, f); paired++; }
+      else { await addOne(f); lone++; }
     }
+  } catch (e) {
+    toast("Browser mein jagah kam pad gayi — kuch files add nahi hui", 4000);
   }
   await loadLocalTracks();
   renderLocalTable();
   renderSetup();
-  if (added) toast(`🎵 ${added} gaane add ho gaye — ab "Sab ki ringtone banao" dabao`, 3500);
+  const msg = [];
+  if (added - lone) msg.push(`🎵 ${added - lone} gaane add`);
+  if (paired) msg.push(`🎼 ${paired} instrumental jod di`);
+  if (lone) msg.push(`⚠️ ${lone} instrumental ka original nahi mila (alag gaana bana diya — 🎼 se sahi gaane mein jodo)`);
+  if (vocalsOnly.length) msg.push(`${vocalsOnly.length} "Vocals" files chhod di`);
+  if (msg.length) toast(msg.join(" · "), 5000);
 }
 async function updateTrack(id, patch) {
   const t = trackById(id);
@@ -210,36 +243,79 @@ async function getLocalUrl(fid) {
 }
 
 // ---------- Ringtone engine ----------
-// Ringtone = asli gaane ka hissa, singer ki awaaz hata ke (sirf music).
-// Tareeka: stereo gaane mein singer beech (center) mein hota hai → Left − Right karne se woh kat jaata hai,
-// aur bass/kick (jo bhi center mein hote hain) ko alag se wapas jod dete hain.
+// 3 ghantiyan: 0 = sirf music, 1 = music + halki awaaz, 2 = poora original.
+// "Sirf music" kahan se aata hai:
+//   a) UVR jaise tool se bani Instrumental file (sabse saaf) — Gaane tab mein original ke saath daalo, app khud jod deta hai
+//   b) warna app khud stereo trick se singer ko halka karta hai (L − R)
 function actx() { music.unlock(true); return music.ctx; }
 
 const ring = {
+  fullCache: new Map(),   // poore decode kiye gaane (sirf 2 yaad rakhte hain, memory bachane ke liye)
   segCache: new Map(),
   playing: null,
 
-  // Gaane ka chuna hua hissa (start se clip+1 sec)
-  async segment(t, len) {
+  async decode(blobId) {
+    if (this.fullCache.has(blobId)) return this.fullCache.get(blobId);
     const c = actx();
     if (!c) throw new Error("audio");
-    const key = t.id + "|" + (hasStart(t.start) ? +t.start : "a") + "|" + len;
-    if (this.segCache.has(key)) return this.segCache.get(key);
-    const rec = await idb.get("blobs", t.id);
+    const rec = await idb.get("blobs", blobId);
     if (!rec || !rec.blob) throw new Error("missing");
     const arr = await rec.blob.arrayBuffer();
-    const full = await new Promise((res, rej) => {
+    const buf = await new Promise((res, rej) => {
       const p = c.decodeAudioData(arr, res, rej);
       if (p && p.then) p.then(res, rej);
     });
-    const dur = full.duration;
-    let st = hasStart(t.start) ? +t.start : Math.floor(dur * (CONFIG.AUTO_START || 0.3));
-    st = Math.max(0, Math.min(st, Math.max(0, dur - len - 1)));
-    const sr = full.sampleRate, from = Math.floor(st * sr);
-    const n = Math.max(1, Math.min(full.length - from, Math.floor((len + 1) * sr)));
-    const seg = c.createBuffer(full.numberOfChannels, n, sr);
-    for (let ch = 0; ch < full.numberOfChannels; ch++) seg.getChannelData(ch).set(full.getChannelData(ch).subarray(from, from + n));
-    const out = { buf: seg, start: st, dur, music: null, stereo: null };
+    if (this.fullCache.size >= 2) this.fullCache.delete(this.fullCache.keys().next().value);
+    this.fullCache.set(blobId, buf);
+    return buf;
+  },
+
+  // Chorus dhoondo: gaane ke 15%–75% hisse mein sabse "bhara hua" (zor wala) tukda
+  findChorus(buf, len) {
+    const sr = buf.sampleRate, hop = Math.floor(sr * 0.5), chs = buf.numberOfChannels;
+    const frames = [];
+    for (let p = 0; p + hop <= buf.length; p += hop) {
+      let e = 0;
+      for (let c = 0; c < chs; c++) { const d = buf.getChannelData(c); for (let i = p; i < p + hop; i += 8) e += d[i] * d[i]; }
+      frames.push(e);
+    }
+    const w = Math.max(2, Math.round(len * 2)), n = frames.length;
+    if (n < w + 2) return 0;
+    const ps = [0];
+    frames.forEach((v, i) => ps.push(ps[i] + v));
+    const lo = Math.floor(n * 0.15), hi = Math.max(lo, Math.min(n - w, Math.floor(n * 0.75) - w));
+    let best = lo, bestE = -1;
+    for (let i = lo; i <= hi; i++) { const sum = ps[i + w] - ps[i]; if (sum > bestE) { bestE = sum; best = i; } }
+    return Math.max(0, best * 0.5 - 0.5);
+  },
+  async startFor(t, len, full) {
+    if (hasStart(t.start)) return +t.start;
+    if (t.autoStart != null && t.autoClip === len) return t.autoStart;
+    const st = Math.round(this.findChorus(full, len) * 10) / 10;
+    await updateTrack(t.id, { autoStart: st, autoClip: len });
+    return st;
+  },
+  slice(full, st, len) {
+    const c = actx(), sr = full.sampleRate, from = Math.min(full.length - 1, Math.floor(st * sr));
+    const n = Math.max(1, Math.min(full.length - from, Math.floor(len * sr)));
+    const out = c.createBuffer(full.numberOfChannels, n, sr);
+    for (let ch = 0; ch < full.numberOfChannels; ch++) out.getChannelData(ch).set(full.getChannelData(ch).subarray(from, from + n));
+    return out;
+  },
+
+  // Gaane ka chuna hua hissa — original aur (ho toh) instrumental, dono same second se
+  async segments(t, len) {
+    const key = t.id + "|" + (hasStart(t.start) ? +t.start : "a") + "|" + len + "|" + (t.hasInst ? "i" : "");
+    if (this.segCache.has(key)) return this.segCache.get(key);
+    const full = await this.decode(t.id);
+    let st = await this.startFor(t, len, full);
+    st = Math.max(0, Math.min(st, Math.max(0, full.duration - len - 1)));
+    const orig = this.slice(full, st, len + 1);
+    let inst = null;
+    if (t.hasInst) {
+      try { inst = this.slice(await this.decode(t.id + "_inst"), st, len + 1); } catch (e) { inst = null; }
+    }
+    const out = { orig, inst, start: st, music: null, stereo: null };
     if (this.segCache.size >= 6) this.segCache.delete(this.segCache.keys().next().value);
     this.segCache.set(key, out);
     return out;
@@ -254,32 +330,28 @@ const ring = {
     return mid > 0 && side / mid > 0.02;
   },
 
-  // Singer hatao → sirf music (ek baar banta hai, phir yaad rehta hai)
+  // Backup: app khud singer halka kare (instrumental file na ho tab)
   async musicOnly(seg) {
     if (seg.music) return seg.music;
-    const b = seg.buf;
+    const b = seg.orig;
     const off = new OfflineAudioContext(2, b.length, b.sampleRate);
     const src = off.createBufferSource(); src.buffer = b;
     const sp = off.createChannelSplitter(2);
     src.connect(sp);
     const bq = (type, f, q = 0.7) => { const x = off.createBiquadFilter(); x.type = type; x.frequency.value = f; x.Q.value = q; return x; };
     const G = (v) => { const g = off.createGain(); g.gain.value = v; return g; };
-    // Side = L − R  (singer gayab, instruments bache)
     const l = G(1), r = G(-1), side = G(1);
     sp.connect(l, 0); sp.connect(r, 1); l.connect(side); r.connect(side);
     const sideHp = bq("highpass", 130);
     side.connect(sideHp);
-    // Bass + kick wapas (center mein hote hain) — 150 Hz ke neeche ka hissa
     const ml = G(0.5), mr = G(0.5), mid = G(1);
     sp.connect(ml, 0); sp.connect(mr, 1); ml.connect(mid); mr.connect(mid);
     const bassLp = bq("lowpass", 150), bass = G(0.95);
     mid.connect(bassLp); bassLp.connect(bass);
-    // Hi-hat / chamak (10k+), singer wahan nahi hota
     const airHp = bq("highpass", 10000), air = G(0.5);
     mid.connect(airHp); airHp.connect(air);
     const sum = G(1);
     sideHp.connect(sum); bass.connect(sum); air.connect(sum);
-    // Halka stereo feel: dono kaan mein thoda alag delay
     const merger = off.createChannelMerger(2);
     const dl = off.createDelay(0.05); dl.delayTime.value = 0.012;
     sum.connect(merger, 0, 0); sum.connect(dl); dl.connect(merger, 0, 1);
@@ -288,7 +360,6 @@ const ring = {
     merger.connect(comp); comp.connect(off.destination);
     src.start();
     const outBuf = await off.startRendering();
-    // Awaaz barabar karo (L−R aksar dheema hota hai)
     let peak = 0;
     for (let ch = 0; ch < 2; ch++) { const d = outBuf.getChannelData(ch); for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > peak) peak = v; } }
     const k = peak > 0 ? 0.9 / peak : 1;
@@ -296,34 +367,41 @@ const ring = {
     return (seg.music = outBuf);
   },
 
-  // Gaane ki ringtone tayyar karo → { buf, kind: "music" | "original" }
-  async prepare(t, len) {
-    const seg = await this.segment(t, len);
-    if (seg.stereo === null) seg.stereo = this.isStereo(seg.buf);
-    const key = ringKey(t);
-    if (t.vrKey !== key || t.vr !== (seg.stereo ? "ok" : "mono")) {
-      await updateTrack(t.id, { vr: seg.stereo ? "ok" : "mono", vrKey: key });
-    }
-    if (!seg.stereo || t.ringOk === false) return { buf: seg.buf, kind: "original" };
-    return { buf: await this.musicOnly(seg), kind: "music" };
+  // Kis ghanti pe kya bajega → { parts: [[buffer, volume], ...], level, start }
+  async levelMix(t, len, level) {
+    const seg = await this.segments(t, len);
+    if (seg.stereo === null) seg.stereo = this.isStereo(seg.orig);
+    const vr = seg.inst ? "inst" : seg.stereo ? "ok" : "mono";
+    if (t.vr !== vr || t.vrKey !== ringKey(t)) await updateTrack(t.id, { vr, vrKey: ringKey(t) });
+    let musicBuf = seg.inst;
+    if (!musicBuf && seg.stereo) musicBuf = await this.musicOnly(seg);
+    const start = seg.start;
+    if (!musicBuf || level >= 2) return { parts: [[seg.orig, 1]], level: 2, start };
+    let lv = level;
+    if (!seg.inst && t.ringOk === false && lv === 0) lv = 1;   // ❌ wale gaane: pehli ghanti hi halki awaaz se
+    if (lv <= 0) return { parts: [[musicBuf, 1]], level: 0, start };
+    return { parts: [[musicBuf, seg.inst ? 0.6 : 0.65], [seg.orig, 0.45]], level: 1, start };
   },
 
   // Ringtone jaisa bajao: fade-in → bajta → fade-out
-  playBuffer(buf, len) {
+  playParts(parts, len) {
     const c = actx();
     this.stop();
     const out = c.createGain();
     out.connect(c.destination);
-    const play = Math.min(len, buf.duration);
+    const play = Math.min(len, ...parts.map((p) => p[0].duration));
     const t = c.currentTime + 0.05;
     out.gain.setValueAtTime(0.0001, t);
     out.gain.linearRampToValueAtTime(1, t + 0.35);
     out.gain.setValueAtTime(1, t + Math.max(0.4, play - 0.7));
     out.gain.linearRampToValueAtTime(0.0001, t + play);
-    const src = c.createBufferSource(); src.buffer = buf;
-    src.connect(out);
-    src.start(t, 0, play);
-    this.playing = { out, src };
+    const srcs = parts.map(([buf, vol]) => {
+      const g = c.createGain(); g.gain.value = vol; g.connect(out);
+      const src = c.createBufferSource(); src.buffer = buf; src.connect(g);
+      src.start(t, 0, play);
+      return src;
+    });
+    this.playing = { out, srcs };
     return play + 0.1;
   },
   // Phone vibrate (ringtone se pehle "brrr brrr")
@@ -345,7 +423,11 @@ const ring = {
     this.playing = null;
     if (!p) return;
     try { const c = music.ctx; p.out.gain.cancelScheduledValues(c.currentTime); p.out.gain.setTargetAtTime(0, c.currentTime, 0.03); } catch (e) {}
-    setTimeout(() => { try { if (p.src) p.src.stop(); } catch (e) {} try { p.out.disconnect(); } catch (e) {} }, 220);
+    setTimeout(() => { (p.srcs || []).forEach((s) => { try { s.stop(); } catch (e) {} }); try { p.out.disconnect(); } catch (e) {} }, 220);
+  },
+  forget(id) {
+    [...this.segCache.keys()].forEach((k) => { if (k.startsWith(id + "|")) this.segCache.delete(k); });
+    this.fullCache.delete(id); this.fullCache.delete(id + "_inst");
   }
 };
 
@@ -356,6 +438,7 @@ const state = {
     clip: CONFIG.DEFAULT_CLIP,
     lang: "Mix",
     replay: CONFIG.REPLAY_LIMIT,
+    ladder: "steps",        // "steps" = 3 ghantiyan (music → halki awaaz → original) | "original"
     ...store.get("rp_settings", {})
   },
   game: null,
@@ -370,11 +453,20 @@ function playableSongs() {
 function ringKey(t) { return (hasStart(t.start) ? +t.start : "a") + "|" + state.settings.clip; }
 function ringStatus(t) {
   if (broken.has(t.id)) return "❌ File nahi chali";
-  if (!t.vr || t.vrKey !== ringKey(t)) return "— abhi bani nahi";
-  if (t.vr === "mono") return "⚠️ Mono file — original bajega";
-  if (t.ringOk === false) return "🎤 Original (singer ke saath)";
+  const inst = t.hasInst ? "🎼 Instrumental judi" : "";
+  if (!t.vr || t.vrKey !== ringKey(t)) return inst || "— abhi bani nahi";
+  if (t.vr === "inst") return "🎼 Instrumental ✅";
+  if (t.vr === "mono") return "⚠️ Mono — 🎼 jodo";
+  if (t.ringOk === false) return "❌ → ghanti 1 halki awaaz se";
   if (t.ringOk === true) return "✅ OK — sirf music";
-  return "🎵 Bani — suno & ✅ karo";
+  return "🎵 App music — suno";
+}
+
+// Ringtone / asli gaana kis second se (Start > chorus auto > 30%)
+function songStart(t, dur) {
+  if (hasStart(t.start)) return +t.start;
+  if (t.autoStart != null) return t.autoStart;
+  return Math.floor((dur || 180) * (CONFIG.AUTO_START || 0.3));
 }
 
 // ---------- Navigation ----------
@@ -410,11 +502,13 @@ function renderSetup() {
   setSeg("#clipSeg", S.clip);
   setSeg("#langSeg", S.lang);
   setSeg("#replaySeg", S.replay);
+  setSeg("#ladderSeg", S.ladder);
+  $("#replayRow").classList.toggle("hidden", S.ladder === "steps");
 
   const pool = playableSongs();
-  const ready = pool.filter((t) => t.vr && t.vrKey === ringKey(t)).length;
+  const inst = pool.filter((t) => t.hasInst).length;
   $("#songCountInfo").textContent = localTracks.length
-    ? `🎵 ${pool.length} gaane ready · ${ready} ki ringtone pehle se bani hai (baaki game mein khud banegi). Bina internet chalega.`
+    ? `🎵 ${pool.length} gaane ready · ${inst} ke saath instrumental file judi hai${inst < pool.length ? " (baaki mein app khud singer halka karega)" : " 👌"}. Bina internet chalega.`
     : `📁 Abhi koi gaana nahi. "Gaane" tab mein mp3 files daalo.`;
 }
 function setSeg(sel, val) {
@@ -434,6 +528,7 @@ bindSeg("#countSeg", "count", true);
 bindSeg("#clipSeg", "clip", true);
 bindSeg("#langSeg", "lang", false);
 bindSeg("#replaySeg", "replay", true);
+bindSeg("#ladderSeg", "ladder", false);
 $("#startBtn").addEventListener("click", startGame);
 // ---------- Game (koi team nahi — phone bajao, sab milke pehchano) ----------
 let stopTimer, tickTimer, revealTimer;
@@ -488,7 +583,7 @@ function phoneHtml(g) {
         <div class="caller-sub">bas ek second…</div>
         ${btns("stop", "")}`;
     case "ringing":
-      return `<div class="call-label">📞 Incoming call…</div>
+      return `<div class="call-label">📞 Incoming call…${state.settings.ladder === "steps" ? ` · Ghanti ${g.level + 1}/3` : ""}</div>
         <div class="caller-avatar">🎶</div>
         <div class="caller-name">Unknown Gaana</div>
         <div class="caller-sub">+91 ••••• •••••</div>
@@ -499,7 +594,7 @@ function phoneHtml(g) {
       return `<div class="call-label">📵 Missed call</div>
         <div class="caller-avatar q">❓</div>
         <div class="caller-name">Kaunsa gaana tha?</div>
-        ${g.hint ? `<div class="call-hint">💡 ${hintText(s)}</div>` : `<div class="caller-sub">Pehchana? Jaldi bolo!</div>`}
+        ${g.hint ? `<div class="call-hint">💡 ${hintText(s)}</div>` : `<div class="caller-sub">${state.settings.ladder === "steps" && g.level < 2 ? "Nahi pehchana? Agli ghanti mein awaaz badhegi 🎤" : "Pehchana? Jaldi bolo!"}</div>`}
         ${btns("skip", "reveal")}`;
     case "reveal":
       return `<div class="call-label">✅ Call connected</div>
@@ -517,7 +612,7 @@ function renderGame() {
   if (!g) return;
   const no = g.phase === "reveal" ? g.done : g.done + 1;
   $("#songNo").textContent = `Call ${Math.min(Math.max(1, no), g.total)} / ${g.total}`;
-  $("#modeBadge").textContent = !g.kind || g.phase === "ready" || g.phase === "loading" ? "" : g.kind === "music" ? "🎵 Sirf music" : "🎤 Original";
+  $("#modeBadge").textContent = g.level == null || g.phase === "ready" || g.phase === "loading" ? "" : ["🎵 Sirf music", "🎵+🎤 Halki awaaz", "🎤 Original"][g.level];
 
   const phone = $("#phone");
   phone.classList.toggle("ringing", g.phase === "ringing");
@@ -531,7 +626,7 @@ function renderGame() {
     ready: g.done === 0 ? "Phone bajega — gaana pehchano! 📞" : "Agli call ke liye taiyaar? 👂",
     loading: "Call connect ho rahi hai…",
     ringing: "🎧 Kaunsa gaana hai?",
-    rung: g.hint ? "💡 Ab toh pehchan lo!" : "🤔 Pehchana? Jaldi bolo!",
+    rung: g.hint ? "💡 Ab toh pehchan lo!" : state.settings.ladder === "steps" ? ["⭐ Pehli ghanti pe pehchana? Aap star ho!", "🤔 Ab halki awaaz bhi aa gayi — pehchana?", "😅 Ab toh poora gaana tha — bolo!"][g.level] : "🤔 Pehchana? Jaldi bolo!",
     reveal: ""
   }[g.phase] || "";
 
@@ -559,7 +654,9 @@ function renderControls() {
     case "loading": html = B("skip", "⏭ Doosra gaana", "ghost"); break;
     case "ringing": html = B("stop", "⏹ Rok do", "ghost"); break;
     case "rung":
-      html = B("replay", `🔁 Dobara (${g.replaysLeft})`, "ghost", g.replaysLeft <= 0) +
+      html = (state.settings.ladder === "steps"
+                ? (g.level < 2 ? B("louder", g.level === 0 ? "📞 Agli ghanti (🎤 halki awaaz)" : "📞 Aakhri ghanti (🎤 original)", "ghost") : B("replay", "🔁 Ek baar aur", "ghost", g.replaysLeft <= 0))
+                : B("replay", `🔁 Dobara (${g.replaysLeft})`, "ghost", g.replaysLeft <= 0)) +
              B("hint", "💡 Hint", "ghost", g.hint) +
              B("reveal", "👀 Answer dikhao", "hero") +
              B("skip", "⏭ Skip", "ghost");
@@ -582,6 +679,7 @@ function doAct(act) {
     case "skip": stopAudio(); g.failCount = 0; playNewSong(); break;
     case "stop": endRing(); break;
     case "replay": if (g.replaysLeft > 0) { g.replaysLeft--; startRing(); } break;
+    case "louder": if (g.level < 2) { g.level++; startRing(); } break;
     case "hint": g.hint = true; music.sfx("ting"); renderGame(); break;
     case "reveal":
       stopAudio();
@@ -615,6 +713,7 @@ document.addEventListener("keydown", (e) => {
     if (primary) doAct(primary);
   }
   if ((e.key === "h" || e.key === "H") && ph === "rung" && !state.game.hint) doAct("hint");
+  if ((e.key === "n" || e.key === "N") && ph === "rung" && state.settings.ladder === "steps" && state.game.level < 2) doAct("louder");
   if (e.key === "Escape" && (ph === "ringing" || ph === "loading")) doAct(ph === "ringing" ? "stop" : "skip");
 });
 
@@ -639,10 +738,9 @@ function playNewSong() {
   if (!s) { g.phase = "ready"; renderGame(); return toast("Koi chalne wala gaana nahi bacha. 'Gaane' tab check karo."); }
   g.song = s;
   g.played.add(s.id);
-  g.replaysLeft = state.settings.replay;
+  g.replaysLeft = state.settings.ladder === "steps" ? 1 : state.settings.replay;
   g.hint = false;
-  g.kind = null;
-  g.buf = null;
+  g.level = state.settings.ladder === "steps" ? 0 : 2;
   startRing();
 }
 
@@ -656,11 +754,12 @@ async function startRing() {
   g.phase = "loading";
   renderGame();
   const clip = state.settings.clip;
+  let mix;
   try {
-    if (!g.buf) {
-      const r = await ring.prepare(g.song, clip);
-      g.buf = r.buf;
-      g.kind = r.kind;
+    mix = await ring.levelMix(g.song, clip, g.level);
+    if (mix.level !== g.level) {
+      if (g.level === 0 && mix.level === 2) toast("Is gaane mein singer alag nahi hua (mono) — seedha original baj raha hai", 3500);
+      g.level = mix.level;
     }
   } catch (e) {
     if (my !== g.token) return;
@@ -675,7 +774,7 @@ async function startRing() {
   if (my !== g.token) return;
   let dur;
   try {
-    dur = ring.playBuffer(g.buf, clip);
+    dur = ring.playParts(mix.parts, clip);
   } catch (e) { return onSongFail(); }
   if (my !== g.token) { ring.stop(); return; }
   runCountdown(dur);
@@ -686,8 +785,8 @@ async function playRingOnly() {
   const g = state.game;
   if (!g || !g.song) return;
   try {
-    if (!g.buf) g.buf = (await ring.prepare(g.song, state.settings.clip)).buf;
-    ring.playBuffer(g.buf, state.settings.clip);
+    const mix = await ring.levelMix(g.song, state.settings.clip, state.settings.ladder === "steps" ? 0 : 2);
+    ring.playParts(mix.parts, state.settings.clip);
   } catch (e) { toast("Ringtone nahi chali"); }
 }
 
@@ -751,8 +850,7 @@ async function playOriginal(sec) {
       });
     }
     const d = isFinite(audio.duration) ? audio.duration : 180;
-    const st = hasStart(s.start) ? +s.start : Math.floor(d * (CONFIG.AUTO_START || 0.3));
-    audio.currentTime = Math.max(0, Math.min(st, d - 2));
+    audio.currentTime = Math.max(0, Math.min(songStart(s, d), d - 2));
     audio.volume = 1;
     await audio.play();
     clearTimeout(stopTimer);
@@ -787,6 +885,7 @@ function renderLocalTable() {
       <td><div class="acts">
         <button data-lring="${t.id}" title="Ringtone suno">🔔</button>
         <button data-lorig="${t.id}" title="Asli gaana suno (5 sec)">🔊</button>
+        <button data-linst="${t.id}" title="${t.hasInst ? "Instrumental judi hai: " + esc(t.instFile || "") + " (badalne ke liye dabao)" : "Is gaane ki instrumental file jodo (UVR se bani)"}" class="${t.hasInst ? "on" : ""}">🎼</button>
         <button data-lok="${t.id}" title="Ringtone theek hai" class="${t.ringOk === true ? "on" : ""}">✅</button>
         <button data-lbad="${t.id}" title="Vocals theek se nahi hate — original (singer ke saath) bajao" class="${t.ringOk === false ? "on" : ""}">❌</button>
         <button data-ldel="${t.id}" title="Hatao">🗑</button>
@@ -800,7 +899,19 @@ function renderRow(id) {
   tr.querySelector(".status").textContent = ringStatus(t);
   tr.querySelector("[data-lok]").classList.toggle("on", t.ringOk === true);
   tr.querySelector("[data-lbad]").classList.toggle("on", t.ringOk === false);
+  tr.querySelector("[data-linst]").classList.toggle("on", !!t.hasInst);
 }
+$("#instInput").addEventListener("change", async (e) => {
+  const f = e.target.files && e.target.files[0];
+  const t = trackById(e.target.dataset.fid);
+  e.target.value = "";
+  if (!f || !t) return;
+  try {
+    await attachInstrumental(t, f);
+    renderRow(t.id); renderSetup();
+    toast(`🎼 "${t.title}" ke saath instrumental jud gayi — 🔔 dabake suno`, 3500);
+  } catch (err) { toast("Instrumental save nahi hui"); }
+});
 $("#fileInput").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
 $("#folderInput").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
 
@@ -828,13 +939,14 @@ $("#localTable").addEventListener("click", async (e) => {
     const st = tr.querySelector(".status");
     st.textContent = "⏳ Ringtone ban rahi hai…";
     try {
-      const seg = await ring.segment(t, state.settings.clip);
-      const r = await ring.prepare(t, state.settings.clip);
-      // Gaane tab mein hamesha "sirf music" sunao (❌ laga ho tab bhi), taaki farak samajh aaye
-      const buf = r.kind === "original" && seg.stereo ? await ring.musicOnly(seg) : r.buf;
+      const clip = state.settings.clip;
+      await ring.levelMix(t, clip, 0);
+      const seg = await ring.segments(t, clip);
+      // Gaane tab mein hamesha ghanti 1 wala "sirf music" sunao (❌ laga ho tab bhi), taaki farak samajh aaye
+      const buf = seg.inst || (seg.stereo ? await ring.musicOnly(seg) : seg.orig);
       renderRow(t.id);
-      ring.playBuffer(buf, state.settings.clip);
-      toast(seg.stereo ? `🎵 ${t.title} — sirf music` : `⚠️ ${t.title} mono file hai — singer nahi hat sakta, original bajega`, 3500);
+      ring.playParts([[buf, 1]], clip);
+      toast(seg.inst ? `🎼 ${t.title} — instrumental file se (chorus ${Math.round(seg.start)} sec)` : seg.stereo ? `🎵 ${t.title} — app ne singer halka kiya (chorus ${Math.round(seg.start)} sec)` : `⚠️ ${t.title} mono hai — singer nahi hatega, 🎼 se instrumental jodo`, 3500);
     } catch (err) {
       broken.add(t.id);
       renderRow(t.id);
@@ -846,11 +958,16 @@ $("#localTable").addEventListener("click", async (e) => {
       audio.src = await getLocalUrl(t.id);
       audio.dataset.fid = t.id;
       await new Promise((res, rej) => { audio.addEventListener("loadedmetadata", res, { once: true }); audio.addEventListener("error", rej, { once: true }); });
+      if (!hasStart(t.start) && t.autoStart == null) { try { await ring.segments(t, state.settings.clip); } catch (err) {} }
       const d = isFinite(audio.duration) ? audio.duration : 180;
-      audio.currentTime = hasStart(t.start) ? +t.start : Math.floor(d * (CONFIG.AUTO_START || 0.3));
+      audio.currentTime = Math.max(0, Math.min(songStart(t, d), d - 2));
       await audio.play();
       stopTimer = setTimeout(() => audio.pause(), 5000);
     } catch (err) { toast("Ye file nahi chali"); }
+  } else if (b.dataset.linst) {
+    const inp = $("#instInput");
+    inp.dataset.fid = t.id;
+    inp.click();
   } else if (b.dataset.lok) {
     await updateTrack(t.id, { ringOk: t.ringOk === true ? null : true });
     renderRow(t.id); renderSetup();
@@ -859,8 +976,9 @@ $("#localTable").addEventListener("click", async (e) => {
     renderRow(t.id); renderSetup();
   } else if (b.dataset.ldel && confirm("Ye gaana list se hatana hai?")) {
     const id = t.id;
-    try { await idb.del("meta", id); await idb.del("blobs", id); } catch (err) {}
+    try { await idb.del("meta", id); await idb.del("blobs", id); await idb.del("blobs", id + "_inst"); } catch (err) {}
     if (urlCache[id]) { URL.revokeObjectURL(urlCache[id]); delete urlCache[id]; }
+    ring.forget(id);
     await loadLocalTracks();
     renderLocalTable();
     renderSetup();
@@ -903,8 +1021,8 @@ $("#buildAllBtn").addEventListener("click", async () => {
   for (let i = 0; i < list.length; i++) {
     btn.textContent = `⏳ Ban rahi hai ${i + 1}/${list.length}…`;
     try {
-      const r = await ring.prepare(list[i], state.settings.clip);
-      if (r.kind === "music") ok++; else weak++;
+      await ring.levelMix(list[i], state.settings.clip, 0);
+      if (list[i].vr === "mono") weak++; else ok++;
     } catch (e) { broken.add(list[i].id); weak++; }
     renderRow(list[i].id);
     await sleep(30);
@@ -912,7 +1030,7 @@ $("#buildAllBtn").addEventListener("click", async () => {
   btn.disabled = false;
   btn.textContent = "🎵 Sab ki ringtone banao";
   renderSetup();
-  toast(list.length ? `Ho gaya: ${ok} gaano ki "sirf music" ringtone bani${weak ? `, ${weak} mono/❌ (original bajega)` : ""}. Ab 🔔 se sun ke ✅ / ❌ karo.` : "Sab ki ringtone pehle se bani hai ✅", 4500);
+  toast(list.length ? `Ho gaya: ${ok} gaano ki ringtone bani (chorus khud dhoonda)${weak ? `, ${weak} mono/kharab file — inme 🎼 se instrumental jodo` : ""}. Ab 🔔 se suno.` : "Sab ki ringtone pehle se bani hai ✅", 4500);
 });
 
 // ---------- Fireworks ----------
