@@ -1,9 +1,8 @@
-// ===== Gaana Pehchano — Diwali Night =====
+// ===== Ringtune Pehchano — Diwali Night =====
 
 // ---------- Helpers ----------
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
-const COLORS = ["#ff3d7f", "#ffb020", "#7b5cff", "#16a39a", "#ff6b3d", "#c0399b", "#3d8bfd", "#e0b100", "#2bb673", "#b5651d"];
 const REDUCED = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const store = {
@@ -14,16 +13,8 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 function randInt(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
-function parseYtId(str) {
-  if (!str) return "";
-  str = String(str).trim();
-  if (/^[\w-]{11}$/.test(str)) return str;
-  const m = str.match(/(?:v=|youtu\.be\/|embed\/|shorts\/|live\/)([\w-]{11})/);
-  return m ? m[1] : "";
-}
 function hasStart(v) { return v !== null && v !== undefined && v !== "" && !isNaN(+v); }
-function fmtTime(sec) { sec = Math.max(0, Math.round(sec)); return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0"); }
-function norm(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let toastTimer;
 function toast(msg, ms = 2600) {
@@ -34,39 +25,13 @@ function toast(msg, ms = 2600) {
   toastTimer = setTimeout(() => t.classList.remove("show"), ms);
 }
 
-// ---------- YouTube songs (config + browser changes) ----------
-function loadSongs() {
-  const ov = store.get("gp_overrides", {});
-  const custom = store.get("gp_custom", []);
-  const base = SONGS.map((s, i) => ({ ...s, key: "b" + i, ...(ov["b" + i] || {}) }));
-  const extra = custom.map((s, i) => ({ ...s, key: "c" + i, custom: true }));
-  return [...base, ...extra].map((s) => ({ ...s, id: parseYtId(s.yt), src: "youtube" }));
-}
-let songs = loadSongs();
-const songStatus = {};      // key -> { ok, text }
-const broken = new Set();   // YT video ids / local keys jo is session mein nahi chale
-
-function updateSong(key, patch) {
-  if (key.startsWith("c")) {
-    const custom = store.get("gp_custom", []);
-    const i = +key.slice(1);
-    if (custom[i]) Object.assign(custom[i], patch);
-    store.set("gp_custom", custom);
-  } else {
-    const ov = store.get("gp_overrides", {});
-    ov[key] = { ...(ov[key] || {}), ...patch };
-    store.set("gp_overrides", ov);
-  }
-  songs = loadSongs();
-}
-
-// ---------- Local instrumental files (IndexedDB, sirf is browser mein) ----------
+// ---------- Gaano ki files (IndexedDB, sirf is browser mein) ----------
 const idb = {
   db: null,
   open() {
     return new Promise((res, rej) => {
       if (this.db) return res(this.db);
-      const r = indexedDB.open("gaana_pehchano", 1);
+      const r = indexedDB.open("ringtune_pehchano", 1);
       r.onupgradeneeded = () => {
         r.result.createObjectStore("meta", { keyPath: "id" });
         r.result.createObjectStore("blobs", { keyPath: "id" });
@@ -93,47 +58,31 @@ const idb = {
 
 let localTracks = [];
 const urlCache = {};
+const broken = new Set();     // jo files is session mein nahi chali
 
 async function loadLocalTracks() {
   try { localTracks = (await idb.all("meta")) || []; } catch (e) { localTracks = []; }
   localTracks.sort((a, b) => a.added - b.added);
 }
-function localSong(t) {
-  return { key: "f" + t.id, fid: t.id, src: "local", title: t.title, singer: t.singer || "", movie: t.movie || "", lang: t.lang, start: t.start };
-}
+function trackById(id) { return localTracks.find((x) => x.id === id); }
 function parseFileName(name) {
   let base = name.replace(/\.[^.]+$/, "").replace(/_/g, " ");
   base = base.replace(/[\[(][^\])]*[\])]/g, " ")
-    .replace(/\b(instrumental|karaoke|official|audio|video|lyrics?|flute|piano|guitar|cover|version|hd|4k|full song|song)\b/gi, " ")
+    .replace(/\b(instrumental|karaoke|official|audio|video|lyrics?|flute|piano|guitar|cover|version|hd|4k|full song|song|ringtone)\b/gi, " ")
     .replace(/\s+/g, " ").trim();
   const parts = base.split(/\s+[-–|]\s+/);
-  return { title: (parts[0] || base).trim(), singer: (parts[1] || "").trim() };
-}
-function matchConfigSong(title) {
-  const n = norm(title);
-  if (!n) return null;
-  return SONGS.find((s) => norm(s.title) === n) || SONGS.find((s) => n.includes(norm(s.title)) && norm(s.title).length > 3) || null;
+  return { title: (parts[0] || base).trim(), singer: (parts[1] || "").trim(), movie: (parts[2] || "").trim() };
 }
 
 async function addFiles(fileList) {
   const files = [...fileList].filter((f) => (f.type || "").startsWith("audio/") || /\.(mp3|m4a|aac|wav|ogg|opus|flac|webm)$/i.test(f.name));
   if (!files.length) return toast("Isme koi audio file nahi mili");
-  const langPick = $("#uploadLang").value;
+  const lang = $("#uploadLang").value;
   let added = 0;
   for (const f of files) {
     const p = parseFileName(f.name);
-    const m = matchConfigSong(p.title);
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    const meta = {
-      id,
-      added: Date.now() + added,
-      file: f.name,
-      title: m ? m.title : p.title,
-      singer: p.singer || (m ? m.singer : ""),
-      movie: m ? m.movie : "",
-      lang: langPick !== "auto" ? langPick : (m ? m.lang : "Hindi"),
-      start: null
-    };
+    const meta = { id, added: Date.now() + added, file: f.name, title: p.title || "Bina naam", singer: p.singer, movie: p.movie, lang, start: null, notes: null, notesKey: null, ringOk: null };
     try {
       await idb.put("blobs", { id, blob: f });
       await idb.put("meta", meta);
@@ -146,10 +95,10 @@ async function addFiles(fileList) {
   await loadLocalTracks();
   renderLocalTable();
   renderSetup();
-  if (added) toast(`🎵 ${added} files add ho gayi`);
+  if (added) toast(`🎵 ${added} gaane add ho gaye — ab "Sab ki ringtone banao" dabao`, 3500);
 }
 async function updateTrack(id, patch) {
-  const t = localTracks.find((x) => x.id === id);
+  const t = trackById(id);
   if (!t) return;
   Object.assign(t, patch);
   try { await idb.put("meta", t); } catch (e) { toast("Save nahi hua"); }
@@ -162,28 +111,323 @@ async function getLocalUrl(fid) {
   return urlCache[fid];
 }
 
+// ---------- Ringtone engine ----------
+// Mode 1: gaane ke hisse se dhun (melody) nikal ke ringtone ki awaaz mein bajana
+// Mode 2: wahi hissa "purane phone ke speaker" jaisa bajana
+const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
+function actx() { music.unlock(true); return music.ctx; }
+
+// Dhun nikaalna: YIN pitch detection → notes
+function extractNotes(x, sr) {
+  const W = 512, H = 256, minLag = Math.floor(sr / 1100), maxLag = Math.ceil(sr / 150);
+  const d = new Float32Array(maxLag + 2);
+  let gs = 0;
+  for (let i = 0; i < x.length; i++) gs += x[i] * x[i];
+  const grms = Math.sqrt(gs / x.length) || 1e-9;
+  const frames = [], energy = [];
+  for (let pos = 0; pos + W + maxLag + 1 < x.length; pos += H) {
+    let e = 0;
+    for (let i = 0; i < W; i++) e += x[pos + i] * x[pos + i];
+    energy.push(Math.sqrt(e / W));
+    if (Math.sqrt(e / W) < grms * 0.35) { frames.push(null); continue; }
+    for (let tau = 1; tau <= maxLag + 1; tau++) {
+      let s = 0;
+      for (let i = 0; i < W; i++) { const dd = x[pos + i] - x[pos + i + tau]; s += dd * dd; }
+      d[tau] = s;
+    }
+    let run = 0;
+    d[0] = 1;
+    for (let tau = 1; tau <= maxLag + 1; tau++) { run += d[tau]; d[tau] = run ? (d[tau] * tau) / run : 1; }
+    let best = -1;
+    for (let tau = minLag; tau <= maxLag; tau++) {
+      if (d[tau] < 0.15) { while (tau + 1 <= maxLag && d[tau + 1] < d[tau]) tau++; best = tau; break; }
+    }
+    if (best < 0) {
+      let mi = minLag;
+      for (let tau = minLag; tau <= maxLag; tau++) if (d[tau] < d[mi]) mi = tau;
+      if (d[mi] < 0.35) best = mi;
+    }
+    if (best < 0) { frames.push(null); continue; }
+    const a = d[best - 1], b = d[best], c = d[best + 1];
+    const den = a + c - 2 * b;
+    const shift = den ? (a - c) / (2 * den) : 0;
+    frames.push(69 + 12 * Math.log2(sr / (best + shift) / 440));
+  }
+  // median smoothing
+  const sm = frames.map((v, i) => {
+    if (v == null) return null;
+    const w = [];
+    for (let k = -2; k <= 2; k++) { const u = frames[i + k]; if (u != null) w.push(u); }
+    w.sort((p, q) => p - q);
+    return w[w.length >> 1];
+  });
+  // frames → notes
+  const hop = H / sr;
+  let raw = [], cur = null;
+  sm.forEach((v, i) => {
+    const r = v == null ? null : Math.round(v);
+    // same sur dobara baja (nayi chot / onset) → alag note, taaki rhythm bani rahe
+    const onset = i > 1 && energy[i] > 1.45 * Math.min(energy[i - 1], energy[i - 2]) && energy[i] > grms * 0.5;
+    if (cur && r === cur.m && !(onset && cur.n >= 4)) { cur.n++; return; }
+    if (cur) raw.push(cur);
+    cur = r == null ? null : { i, n: 1, m: r };
+  });
+  if (cur) raw.push(cur);
+  let notes = raw.map((n) => ({ t: n.i * hop, d: n.n * hop, m: n.m })).filter((n) => n.d >= 0.07);
+  // same sur ke tukde jodo
+  const merged = [];
+  notes.forEach((n) => {
+    const p = merged[merged.length - 1];
+    if (p && p.m === n.m && n.t - (p.t + p.d) < 0.06 && n.t - (p.t + p.d) > 0.001) p.d = n.t + n.d - p.t;
+    else merged.push({ ...n });
+  });
+  notes = merged;
+  // octave ki galti theek karo
+  for (let i = 1; i < notes.length - 1; i++) {
+    const p = notes[i - 1].m, n = notes[i + 1].m, c = notes[i].m;
+    if (Math.abs(c - p) >= 10 && Math.abs(c - n) >= 10 && Math.abs(p - n) < 5) notes[i].m += 12 * Math.round(((p + n) / 2 - c) / 12);
+  }
+  // chhote gaps bharo (legato)
+  for (let i = 0; i < notes.length - 1; i++) {
+    const gap = notes[i + 1].t - (notes[i].t + notes[i].d);
+    if (gap > 0 && gap < 0.12) notes[i].d += gap;
+  }
+  if (!notes.length) return [];
+  // ringtone jaisi oonchi awaaz pe le jao
+  const ms = notes.map((n) => n.m).sort((p, q) => p - q);
+  const tr = 12 * Math.round((74 - ms[ms.length >> 1]) / 12);
+  const t0 = notes[0].t;
+  return notes.map((n) => ({ t: +(n.t - t0).toFixed(3), d: +Math.min(n.d, 1.6).toFixed(3), m: n.m + tr }));
+}
+
+// --- Ringtone ki awaazein ---
+let pulseWave = null;
+function pulse(c) {
+  if (pulseWave) return pulseWave;
+  const N = 32, real = new Float32Array(N), imag = new Float32Array(N), duty = 0.25;
+  for (let n = 1; n < N; n++) real[n] = (2 / (n * Math.PI)) * Math.sin(n * Math.PI * duty);
+  return (pulseWave = c.createPeriodicWave(real, imag));
+}
+function envGain(c, t, a, hold, rel, peak) {
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(peak, t + a);
+  g.gain.setValueAtTime(peak, t + a + Math.max(0, hold));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + a + Math.max(0, hold) + rel);
+  return g;
+}
+const VOICES = {
+  nokia(c, out, t, d, f) {
+    const o = c.createOscillator(); o.type = "square"; o.frequency.value = f;
+    const lp = c.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 3500;
+    const e = envGain(c, t, 0.005, d * 0.82 - 0.01, 0.03, 0.085);
+    o.connect(lp); lp.connect(e); e.connect(out);
+    o.start(t); o.stop(t + d + 0.1);
+  },
+  marimba(c, out, t, d, f) {
+    const hit = (s, v) => {
+      [[1, 1, 0.9], [3.9, 0.18, 0.12], [10, 0.05, 0.04]].forEach(([m, a, dec]) => {
+        const o = c.createOscillator(); o.type = "sine"; o.frequency.value = f * m;
+        const e = envGain(c, s, 0.003, 0, Math.min(dec * (m === 1 ? 1 : 1), 1.2), 0.32 * a * v);
+        o.connect(e); e.connect(out); o.start(s); o.stop(s + 1.4);
+      });
+    };
+    hit(t, 1);
+    for (let s = t + 0.2; s < t + d - 0.08; s += 0.2) hit(s, 0.55);   // lambe sur pe tremolo
+  },
+  bit8(c, out, t, d, f) {
+    const o = c.createOscillator(); o.setPeriodicWave(pulse(c));
+    o.frequency.setValueAtTime(f * 2, t); o.frequency.setValueAtTime(f, t + 0.025);
+    const e = envGain(c, t, 0.003, d * 0.7, 0.04, 0.1);
+    o.connect(e); e.connect(out); o.start(t); o.stop(t + d + 0.1);
+  },
+  bansuri(c, out, t, d, f, prev) {
+    const o = c.createOscillator(); o.type = "sine";
+    if (prev && t - prev.end < 0.08) { o.frequency.setValueAtTime(prev.f, t); o.frequency.exponentialRampToValueAtTime(f, t + 0.05); }
+    else o.frequency.setValueAtTime(f, t);
+    const vib = c.createOscillator(); vib.frequency.value = 5.2;
+    const vg = c.createGain(); vg.gain.setValueAtTime(0, t); vg.gain.linearRampToValueAtTime(f * 0.012, t + Math.min(0.35, d));
+    vib.connect(vg); vg.connect(o.frequency);
+    const o2 = c.createOscillator(); o2.type = "sine"; o2.frequency.value = f * 2;
+    const g2 = c.createGain(); g2.gain.value = 0.12; o2.connect(g2);
+    const e = envGain(c, t, 0.05, d - 0.05, 0.12, 0.22);
+    o.connect(e); g2.connect(e); e.connect(out);
+    const n = c.createBufferSource(); n.buffer = music.noise;
+    const bp = c.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = f * 2; bp.Q.value = 1.5;
+    const ne = envGain(c, t, 0.03, 0.02, 0.12, 0.04);
+    n.connect(bp); bp.connect(ne); ne.connect(out);
+    o.start(t); o2.start(t); vib.start(t); n.start(t);
+    const end = t + d + 0.2;
+    o.stop(end); o2.stop(end); vib.stop(end); n.stop(t + 0.25);
+  },
+  seeti(c, out, t, d, f, prev) {
+    const F = f * 2;
+    const o = c.createOscillator(); o.type = "sine";
+    if (prev && t - prev.end < 0.1) { o.frequency.setValueAtTime(prev.f * 2, t); o.frequency.exponentialRampToValueAtTime(F, t + 0.06); }
+    else { o.frequency.setValueAtTime(F * 0.94, t); o.frequency.exponentialRampToValueAtTime(F, t + 0.05); }
+    const vib = c.createOscillator(); vib.frequency.value = 6;
+    const vg = c.createGain(); vg.gain.value = F * 0.008;
+    vib.connect(vg); vg.connect(o.frequency);
+    const e = envGain(c, t, 0.03, d - 0.04, 0.08, 0.15);
+    o.connect(e); e.connect(out);
+    const n = c.createBufferSource(); n.buffer = music.noise; n.loop = true;
+    const bp = c.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = F; bp.Q.value = 8;
+    const ne = envGain(c, t, 0.03, d - 0.04, 0.08, 0.05);
+    n.connect(bp); bp.connect(ne); ne.connect(out);
+    o.start(t); vib.start(t); n.start(t);
+    const end = t + d + 0.15;
+    o.stop(end); vib.stop(end); n.stop(end);
+  }
+};
+const VOICE_NAMES = { nokia: "📱 Nokia", marimba: "🎹 Marimba", bit8: "👾 8-bit", bansuri: "🪈 Bansuri", seeti: "😗 Seeti" };
+
+const ring = {
+  segCache: new Map(),
+  playing: null,
+
+  // Gaane ka chuna hua hissa (start se clip+1 sec)
+  async segment(t, len) {
+    const c = actx();
+    if (!c) throw new Error("audio");
+    const key = t.id + "|" + (hasStart(t.start) ? +t.start : "a") + "|" + len;
+    if (this.segCache.has(key)) return this.segCache.get(key);
+    const rec = await idb.get("blobs", t.id);
+    if (!rec || !rec.blob) throw new Error("missing");
+    const arr = await rec.blob.arrayBuffer();
+    const full = await new Promise((res, rej) => {
+      const p = c.decodeAudioData(arr, res, rej);
+      if (p && p.then) p.then(res, rej);
+    });
+    const dur = full.duration;
+    let st = hasStart(t.start) ? +t.start : Math.floor(dur * (CONFIG.AUTO_START || 0.3));
+    st = Math.max(0, Math.min(st, Math.max(0, dur - len - 1)));
+    const sr = full.sampleRate, from = Math.floor(st * sr);
+    const n = Math.max(1, Math.min(full.length - from, Math.floor((len + 1) * sr)));
+    const seg = c.createBuffer(full.numberOfChannels, n, sr);
+    for (let ch = 0; ch < full.numberOfChannels; ch++) seg.getChannelData(ch).set(full.getChannelData(ch).subarray(from, from + n));
+    const out = { buf: seg, start: st, dur, rev: null };
+    if (this.segCache.size >= 6) this.segCache.delete(this.segCache.keys().next().value);
+    this.segCache.set(key, out);
+    return out;
+  },
+
+  // Dhun nikaalo (ek baar banti hai, phir browser mein save)
+  async melody(t, len) {
+    const key = (hasStart(t.start) ? +t.start : "a") + "|" + len;
+    if (t.notes && t.notesKey === key) return t.notes;
+    const seg = await this.segment(t, len);
+    const SR = 22050;
+    const off = new OfflineAudioContext(1, Math.ceil(Math.min(seg.buf.duration, len) * SR), SR);
+    const src = off.createBufferSource(); src.buffer = seg.buf;
+    const hp = off.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 170;
+    const lp = off.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 2000;
+    src.connect(hp); hp.connect(lp); lp.connect(off.destination);
+    src.start();
+    const rendered = await off.startRendering();
+    const notes = extractNotes(rendered.getChannelData(0), SR);
+    await updateTrack(t.id, { notes, notesKey: key, ringOk: notes.length >= 6 ? null : false });
+    return notes;
+  },
+
+  out(c, vol) {
+    this.stop();
+    const g = c.createGain(); g.gain.value = vol;
+    g.connect(c.destination);
+    return g;
+  },
+  playNotes(notes, voice) {
+    const c = actx();
+    if (!c || !notes.length) return 0;
+    const out = this.out(c, 0.9);
+    const t0 = c.currentTime + 0.08, V = VOICES[voice] || VOICES.nokia;
+    let prev = null;
+    notes.forEach((n) => {
+      const f = mtof(n.m);
+      V(c, out, t0 + n.t, Math.max(0.08, n.d), f, prev);
+      prev = { f, end: t0 + n.t + n.d };
+    });
+    const last = notes[notes.length - 1];
+    this.playing = { out };
+    return last.t + last.d + 0.3;
+  },
+  async playSpeaker(t, len, fx) {
+    const c = actx();
+    const seg = await this.segment(t, len);
+    let buf = seg.buf;
+    if (fx === "ulta") {
+      if (!seg.rev) {
+        seg.rev = c.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
+        for (let ch = 0; ch < buf.numberOfChannels; ch++) seg.rev.getChannelData(ch).set(Array.prototype.slice.call(buf.getChannelData(ch)).reverse());
+      }
+      buf = seg.rev;
+    }
+    const out = this.out(c, 0.8);
+    const src = c.createBufferSource(); src.buffer = buf;
+    const rate = fx === "fast" ? 1.3 : 1;
+    src.playbackRate.value = rate;
+    const hp = c.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 850; hp.Q.value = 0.8;
+    const lp = c.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 3300;
+    const pk = c.createBiquadFilter(); pk.type = "peaking"; pk.frequency.value = 1800; pk.gain.value = 9; pk.Q.value = 1.2;
+    const sh = c.createWaveShaper();
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) { const x = (i / 1023) * 2 - 1; curve[i] = Math.tanh(x * 3) / Math.tanh(3); }
+    sh.curve = curve;
+    const pre = c.createGain(); pre.gain.value = 1.4;
+    src.connect(hp); hp.connect(lp); lp.connect(pk); pk.connect(pre); pre.connect(sh); sh.connect(out);
+    const play = Math.min(len, buf.duration);
+    src.start(c.currentTime + 0.05, 0, play);
+    this.playing = { out, src };
+    return play / rate + 0.1;
+  },
+  // Phone vibrate (ringtone se pehle "brrr brrr")
+  vibrate() {
+    const c = actx();
+    if (!c) return;
+    [0, 0.32].forEach((dt) => {
+      const t = c.currentTime + 0.02 + dt;
+      const o = c.createOscillator(); o.type = "square"; o.frequency.value = 55;
+      const lp = c.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 400;
+      const e = envGain(c, t, 0.01, 0.2, 0.03, 0.12);
+      o.connect(lp); lp.connect(e); e.connect(c.destination); o.start(t); o.stop(t + 0.3);
+    });
+  },
+  stop() {
+    const p = this.playing;
+    this.playing = null;
+    if (!p) return;
+    try { const c = music.ctx; p.out.gain.setTargetAtTime(0, c.currentTime, 0.03); } catch (e) {}
+    setTimeout(() => { try { if (p.src) p.src.stop(); } catch (e) {} try { p.out.disconnect(); } catch (e) {} }, 220);
+  }
+};
+
 // ---------- State ----------
 const state = {
   settings: {
-    source: CONFIG.DEFAULT_SOURCE || "local",
+    mode: CONFIG.DEFAULT_MODE || "ringtune",
+    voice: CONFIG.DEFAULT_VOICE || "nokia",
+    fx: "normal",
     count: CONFIG.DEFAULT_COUNT,
     clip: CONFIG.DEFAULT_CLIP,
     lang: "Mix",
     replay: CONFIG.REPLAY_LIMIT,
-    ...store.get("gp_settings2", {})
+    ...store.get("rp_settings", {})
   },
   game: null,
   view: "setup"
 };
-function saveSettings() { store.set("gp_settings2", state.settings); }
+function saveSettings() { store.set("rp_settings", state.settings); }
 
 function playableSongs() {
   const lang = state.settings.lang;
-  const okLang = (s) => lang === "Mix" || s.lang === lang;
-  if (state.settings.source === "local") {
-    return localTracks.map(localSong).filter((s) => okLang(s) && !broken.has(s.key));
-  }
-  return songs.filter((s) => s.id && !broken.has(s.id) && okLang(s));
+  return localTracks.filter((t) => (lang === "Mix" || t.lang === lang) && !broken.has(t.id));
+}
+function ringKey(t) { return (hasStart(t.start) ? +t.start : "a") + "|" + state.settings.clip; }
+function ringStatus(t) {
+  if (broken.has(t.id)) return "❌ File nahi chali";
+  if (!t.notes || t.notesKey !== ringKey(t)) return "— abhi bani nahi";
+  if (t.ringOk === false) return "📢 Speaker mode";
+  if (t.ringOk === true) return `✅ OK (${t.notes.length} sur)`;
+  return `🎵 ${t.notes.length} sur — suno & ✅ karo`;
 }
 
 // ---------- Navigation ----------
@@ -192,7 +436,7 @@ function showView(v) {
   $$(".screen").forEach((s) => s.classList.remove("active"));
   $("#screen-" + v).classList.add("active");
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.nav !== "intro" && (t.dataset.nav === "songs") === (v === "songs")));
-  if (v === "songs") { renderSongTable(); renderLocalTable(); }
+  if (v === "songs") renderLocalTable();
   if (v === "setup") renderSetup();
   window.scrollTo(0, 0);
 }
@@ -204,94 +448,166 @@ $$(".tab").forEach((t) => t.addEventListener("click", () => {
   const nav = t.dataset.nav;
   if (nav === "intro") return startIntro();
   if (nav === "songs") {
-    if (state.game && ["playing", "loading"].includes(state.game.phase)) { stopAudio(); state.game.phase = "played"; }
+    if (state.game && ["ringing", "loading"].includes(state.game.phase)) { stopAudio(); state.game.phase = "rung"; }
+    else stopAudio();
     return showView("songs");
   }
+  stopAudio();
   goToGameArea();
 }));
 
 // ---------- Setup ----------
 function renderSetup() {
-  setSeg("#sourceSeg", state.settings.source);
-  setSeg("#countSeg", state.settings.count);
-  setSeg("#clipSeg", state.settings.clip);
-  setSeg("#langSeg", state.settings.lang);
-  setSeg("#replaySeg", state.settings.replay);
+  const S = state.settings;
+  setSeg("#modeSeg", S.mode);
+  setSeg("#voiceSeg", S.voice);
+  setSeg("#fxSeg", S.fx);
+  setSeg("#countSeg", S.count);
+  setSeg("#clipSeg", S.clip);
+  setSeg("#langSeg", S.lang);
+  setSeg("#replaySeg", S.replay);
+  $("#voiceRow").classList.toggle("hidden", S.mode === "speaker");
+  $("#fxRow").classList.toggle("hidden", S.mode === "ringtune");
 
   const pool = playableSongs();
-  let info;
-  if (state.settings.source === "local") {
-    const h = localTracks.filter((t) => t.lang === "Hindi").length;
-    const p = localTracks.filter((t) => t.lang === "Punjabi").length;
-    info = localTracks.length
-      ? `📁 ${pool.length} instrumental tunes ready (Hindi ${h}, Punjabi ${p}). Bina ads, bina internet.`
-      : `📁 Abhi koi file nahi. Songs tab mein instrumental mp3 files daalo, ya YouTube chuno.`;
-  } else {
-    info = `▶ ${pool.length} YouTube gaane ready. Ad aaya toh awaaz mute karke wait karega.`;
-  }
-  $("#songCountInfo").textContent = info;
+  const ready = pool.filter((t) => t.notes && t.notesKey === ringKey(t) && t.ringOk !== false).length;
+  $("#songCountInfo").textContent = localTracks.length
+    ? `🎵 ${pool.length} gaane ready · ${ready} ki ringtone pehle se bani hai (baaki game mein khud banegi). Bina internet chalega.`
+    : `📁 Abhi koi gaana nahi. "Gaane" tab mein mp3 files daalo.`;
+  $("#voiceNow").textContent = `Abhi ki awaaz: ${VOICE_NAMES[S.voice]} (Game tab ki settings se badlo)`;
 }
 function setSeg(sel, val) {
   $$(sel + " button").forEach((b) => b.classList.toggle("on", String(b.dataset.v) === String(val)));
 }
-function bindSeg(sel, key, isNum) {
+function bindSeg(sel, key, isNum, after) {
   $(sel).addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b) return;
     state.settings[key] = isNum ? +b.dataset.v : b.dataset.v;
     saveSettings();
     renderSetup();
+    if (after) after();
   });
 }
-bindSeg("#sourceSeg", "source", false);
+bindSeg("#modeSeg", "mode", false);
+bindSeg("#voiceSeg", "voice", false, () => demoVoice());
+bindSeg("#fxSeg", "fx", false);
 bindSeg("#countSeg", "count", true);
 bindSeg("#clipSeg", "clip", true);
 bindSeg("#langSeg", "lang", false);
 bindSeg("#replaySeg", "replay", true);
 $("#startBtn").addEventListener("click", startGame);
+$("#voiceDemo").addEventListener("click", () => demoVoice());
 
-// ---------- Game (koi team nahi — bas tune bajao, sab milke pehchano) ----------
+// Awaaz ka sample (koi gaana nahi — bas ek chhoti si dhun)
+function demoVoice() {
+  const m = [76, 74, 72, 74, 76, 79, 76, 72, 74];
+  const notes = m.map((x, i) => ({ t: i * 0.22, d: i === m.length - 1 ? 0.6 : 0.2, m: x }));
+  ring.playNotes(notes, state.settings.voice);
+}
+
+// ---------- Game (koi team nahi — phone bajao, sab milke pehchano) ----------
+let stopTimer, tickTimer, revealTimer;
+const audio = $("#localAudio");
+
+function stopAudio() {
+  clearTimeout(stopTimer);
+  clearInterval(tickTimer);
+  clearTimeout(revealTimer);
+  if (state.game) state.game.token++;
+  ring.stop();
+  try { audio.pause(); } catch (e) {}
+}
+
 function startGame() {
   const pool = playableSongs();
-  if (!pool.length) {
-    return toast(state.settings.source === "local"
-      ? "Is language ki koi file nahi — Songs tab mein instrumental files daalo"
-      : "Is language mein koi link wala gaana nahi — Songs tab mein link daalo", 3500);
-  }
-  if (state.settings.source === "youtube" && !ytReady) toast("YouTube player load ho raha hai… internet on rakho");
+  if (!pool.length) return toast("Is language ka koi gaana nahi — 'Gaane' tab mein mp3 files daalo", 3500);
+  actx();
   const total = state.settings.count ? Math.min(state.settings.count, pool.length) : pool.length;
-  state.game = { total, done: 0, song: null, phase: "ready", played: new Set(), replaysLeft: 0, failCount: 0, adWait: false };
+  state.game = { total, done: 0, song: null, kind: null, phase: "ready", played: new Set(), replaysLeft: 0, failCount: 0, hint: false, token: 0, left: 0 };
   showView("game");
   renderGame();
+}
+
+function hintText(s) {
+  const blank = (w) => esc(String(w).split(/\s+/).filter(Boolean).map((x) => x[0].toUpperCase() + " _".repeat(Math.max(0, x.length - 1))).join("   "));
+  const bits = [];
+  if (s.movie) bits.push("🎬 " + blank(s.movie));
+  if (s.singer) bits.push("🎤 " + esc(s.singer.split(/[,&]/)[0].trim()));
+  if (!bits.length) bits.push("🔤 " + blank(s.title));
+  return bits.join("<br>");
+}
+
+function phoneHtml(g) {
+  const s = g.song;
+  const eq = `<div class="eq">${"<i></i>".repeat(7)}</div>`;
+  const btns = (dec, acc) => `<div class="call-btns">
+      <button class="call-btn decline" data-act="${dec || ""}" ${dec ? "" : "disabled"} title="Kaato"><span>📞</span></button>
+      <button class="call-btn accept" data-act="${acc || ""}" ${acc ? "" : "disabled"} title="Uthao"><span>📞</span></button>
+    </div>`;
+  switch (g.phase) {
+    case "ready":
+      return `<div class="call-label">${g.done === 0 ? "Party mode on" : "Agli call…"}</div>
+        <div class="caller-avatar idle">📱</div>
+        <div class="caller-name">${g.done === 0 ? "Pehli call aane wali hai" : "Agli call aane wali hai"}</div>
+        <div class="caller-sub">Sab taiyaar? 👂</div>
+        ${btns("", "play")}`;
+    case "loading":
+      return `<div class="call-label">Connecting…</div>
+        <div class="caller-avatar">⏳</div>
+        <div class="caller-name">Ringtone ban rahi hai</div>
+        <div class="caller-sub">bas ek second…</div>
+        ${btns("stop", "")}`;
+    case "ringing":
+      return `<div class="call-label">📞 Incoming call…</div>
+        <div class="caller-avatar">🎶</div>
+        <div class="caller-name">Unknown Gaana</div>
+        <div class="caller-sub">+91 ••••• •••••</div>
+        ${eq}
+        <div class="call-timer" id="callTimer">${g.left}</div>
+        ${btns("stop", "")}`;
+    case "rung":
+      return `<div class="call-label">📵 Missed call</div>
+        <div class="caller-avatar q">❓</div>
+        <div class="caller-name">Kaunsa gaana tha?</div>
+        ${g.hint ? `<div class="call-hint">💡 ${hintText(s)}</div>` : `<div class="caller-sub">Pehchana? Jaldi bolo!</div>`}
+        ${btns("skip", "reveal")}`;
+    case "reveal":
+      return `<div class="call-label">✅ Call connected</div>
+        <div class="caller-avatar ok">🎶</div>
+        <div class="caller-name">${esc(s.title)}</div>
+        <div class="caller-sub">${esc(s.singer)}${s.movie ? " · " + esc(s.movie) : ""}</div>
+        ${eq}
+        <div class="caller-sub">🔊 Asli gaana baj raha hai</div>`;
+  }
+  return "";
 }
 
 function renderGame() {
   const g = state.game;
   if (!g) return;
-  const no = g.phase === "ready" && !g.song ? g.done + 1 : Math.max(1, g.phase === "reveal" ? g.done : g.done + 1);
-  $("#songNo").textContent = `Gaana ${Math.min(no, g.total)} / ${g.total}`;
+  const no = g.phase === "reveal" ? g.done : g.done + 1;
+  $("#songNo").textContent = `Call ${Math.min(Math.max(1, no), g.total)} / ${g.total}`;
+  const kind = g.kind || (state.settings.mode === "speaker" ? "speaker" : "ringtune");
+  $("#modeBadge").textContent = g.phase === "ready" ? "" : kind === "speaker" ? "📢 Phone speaker" + (state.settings.fx !== "normal" ? (state.settings.fx === "ulta" ? " · 🔄 Ulta" : " · ⏩ Fast") : "") : "🔔 Ringtone · " + VOICE_NAMES[state.settings.voice].split(" ").slice(1).join(" ");
 
-  $("#record").classList.toggle("spin", g.phase === "playing");
-  $("#tonearm").classList.toggle("on", ["loading", "playing"].includes(g.phase));
-  $("#reveal").classList.toggle("hidden", g.phase !== "reveal");
-  $(".deck").classList.toggle("revealed", g.phase === "reveal");
-  $(".deck").classList.toggle("playing", g.phase === "playing");
-
-  const cd = $("#countdown");
-  if (g.phase === "ready") cd.textContent = "🎶";
-  if (g.phase === "loading") cd.textContent = g.adWait ? "📺" : "…";
-  if (g.phase === "played") cd.textContent = "⏸";
-  if (g.phase === "reveal") cd.textContent = "✨";
-  if (g.phase === "ready" || g.phase === "loading") $("#progressBar").style.width = "0";
+  const phone = $("#phone");
+  phone.classList.toggle("ringing", g.phase === "ringing");
+  phone.classList.toggle("connected", g.phase === "reveal");
+  phone.classList.toggle("missed", g.phase === "rung");
+  $(".deck").classList.toggle("playing", g.phase === "ringing" || g.phase === "reveal");
+  $("#phoneScreen").innerHTML = phoneHtml(g);
+  if (g.phase === "ready" || g.phase === "loading") { const b = $("#progressBar"); b.style.transition = "none"; b.style.width = "0"; }
 
   $("#status").innerHTML = {
-    ready: g.done === 0 ? "Sab taiyaar? Kaan khol ke suniye 👂" : "Agli tune ke liye taiyaar? 👂",
-    loading: "Tune lag rahi hai…" + (g.adWait ? `<span class="ad">📺 YouTube ad chal raha hai, awaaz band hai — bas aa raha hai…</span>` : ""),
-    playing: "🎧 Kaunsa gaana hai?",
-    played: "🤔 Pehchana? Jaldi bolo!",
+    ready: g.done === 0 ? "Phone bajega — gaana pehchano! 📞" : "Agli call ke liye taiyaar? 👂",
+    loading: "Call connect ho rahi hai…",
+    ringing: "🎧 Kaunsa gaana hai?",
+    rung: g.hint ? "💡 Ab toh pehchan lo!" : "🤔 Pehchana? Jaldi bolo!",
     reveal: ""
   }[g.phase] || "";
 
+  $("#reveal").classList.toggle("hidden", g.phase !== "reveal");
   if (g.phase === "reveal" && g.song) {
     const s = g.song;
     const quips = PARTY.QUIPS || [];
@@ -311,282 +627,176 @@ function renderControls() {
   const last = g.done >= g.total;
   let html = "";
   switch (g.phase) {
-    case "ready": html = B("play", "▶ Tune bajao", "hero"); break;
-    case "loading": html = B("skip", "⏭ Doosri tune", "ghost"); break;
-    case "playing": html = B("stop", "⏹ Rok do", "ghost"); break;
-    case "played":
-      html = B("replay", `🔁 Dobara suno (${g.replaysLeft})`, "ghost", g.replaysLeft <= 0) +
+    case "ready": html = B("play", "📞 Phone bajao", "hero"); break;
+    case "loading": html = B("skip", "⏭ Doosra gaana", "ghost"); break;
+    case "ringing": html = B("stop", "⏹ Rok do", "ghost"); break;
+    case "rung":
+      html = B("replay", `🔁 Dobara (${g.replaysLeft})`, "ghost", g.replaysLeft <= 0) +
+             B("hint", "💡 Hint", "ghost", g.hint) +
              B("reveal", "👀 Answer dikhao", "hero") +
              B("skip", "⏭ Skip", "ghost");
       break;
     case "reveal":
-      html = (last ? B("finish", "🎆 Party khatam karo", "hero") : B("next", "▶ Agla gaana", "hero")) +
-             B("more", "🔊 Thoda aur suno", "ghost");
+      html = (last ? B("finish", "🎆 Party khatam karo", "hero") : B("next", "📞 Agli call", "hero")) +
+             B("more", "🔊 Asli gaana phir se", "ghost") +
+             B("again", "🔔 Ringtone phir se", "ghost");
       break;
   }
   $("#controls").innerHTML = html;
 }
 
-$("#controls").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-act]");
-  if (!b || b.disabled) return;
+function doAct(act) {
   const g = state.game;
-  switch (b.dataset.act) {
+  if (!g) return;
+  switch (act) {
     case "play":
     case "next": g.failCount = 0; stopAudio(); playNewSong(); break;
     case "skip": stopAudio(); g.failCount = 0; playNewSong(); break;
-    case "stop": endClip(); break;
-    case "replay": if (g.replaysLeft > 0) { g.replaysLeft--; startClip(true); } break;
+    case "stop": endRing(); break;
+    case "replay": if (g.replaysLeft > 0) { g.replaysLeft--; startRing(); } break;
+    case "hint": g.hint = true; music.sfx("ting"); renderGame(); break;
     case "reveal":
       stopAudio();
       g.done++;
       g.phase = "reveal";
       renderGame();
-      { const r = $("#reveal").getBoundingClientRect(); burst(r.left + r.width / 2, r.top + 10, 70); }
+      music.sfx("tada");
+      { const r = $("#reveal").getBoundingClientRect(); setTimeout(() => burst(r.left + r.width / 2, r.top + 10, 70), 1200); }
+      revealTimer = setTimeout(() => playOriginal(CONFIG.REVEAL_CLIP), 1300);
       break;
-    case "more": playMore(); break;
+    case "more": stopAudio(); playOriginal(CONFIG.REVEAL_CLIP); break;
+    case "again": stopAudio(); playRingOnly(); break;
     case "finish": startOutro(); break;
   }
+}
+$("#controls").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-act]");
+  if (b && !b.disabled) doAct(b.dataset.act);
+});
+$("#phoneScreen").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-act]");
+  if (b && !b.disabled && b.dataset.act) doAct(b.dataset.act);
+});
+document.addEventListener("keydown", (e) => {
+  if (document.body.classList.contains("cine-mode") || state.view !== "game" || !state.game) return;
+  if (/INPUT|SELECT|TEXTAREA/.test((e.target.tagName || ""))) return;
+  const ph = state.game.phase;
+  if (e.key === " " || e.key === "Enter") {
+    e.preventDefault();
+    const primary = { ready: "play", ringing: "stop", rung: "reveal", reveal: state.game.done >= state.game.total ? "finish" : "next" }[ph];
+    if (primary) doAct(primary);
+  }
+  if ((e.key === "h" || e.key === "H") && ph === "rung" && !state.game.hint) doAct("hint");
+  if (e.key === "Escape" && (ph === "ringing" || ph === "loading")) doAct(ph === "ringing" ? "stop" : "skip");
 });
 
 $("#endGameBtn").addEventListener("click", () => {
   if (confirm("Party ka game khatam karke ending dikhayein?")) startOutro();
 });
-// ---------- Playback (local files + YouTube) ----------
-let player = null;
-let ytReady = false;
-let pending = null;            // "game" | "test" | "check" | "more"
-let loadTimer, stopTimer, tickTimer, adPoll;
-let checkResolve = null;
-let testKey = null;
-const audio = $("#localAudio");
-
-window.onYouTubeIframeAPIReady = function () {
-  player = new YT.Player("yt", {
-    width: "200",
-    height: "200",
-    playerVars: { controls: 0, disablekb: 1, playsinline: 1, rel: 0, fs: 0, iv_load_policy: 3, modestbranding: 1 },
-    events: {
-      onReady: () => { ytReady = true; try { player.setVolume(100); } catch (e) {} },
-      onStateChange: onPlayerState,
-      onError: onPlayerError
-    }
-  });
-};
-
-function clearTimers() {
-  clearTimeout(loadTimer);
-  clearTimeout(stopTimer);
-  clearInterval(tickTimer);
-  clearInterval(adPoll);
-}
-function pauseAll() {
-  try { if (player && ytReady) player.pauseVideo(); } catch (e) {}
-  try { audio.pause(); } catch (e) {}
-}
-function stopAudio() {
-  clearTimers();
-  pending = null;
-  pauseAll();
-}
 
 function pickSong() {
   const g = state.game;
-  let pool = playableSongs().filter((s) => !g.played.has(s.key));
+  let pool = playableSongs().filter((s) => !g.played.has(s.id));
   if (!pool.length) {
     g.played.clear();
     pool = playableSongs();
     if (pool.length) toast("Saare gaane baj gaye — list dobara shuru");
   }
-  if (!pool.length) return null;
-  const s = { ...pool[Math.floor(Math.random() * pool.length)] };
-  if (s.src === "youtube") s.startUsed = hasStart(s.start) ? +s.start : randInt(CONFIG.RANDOM_START_MIN, CONFIG.RANDOM_START_MAX);
-  else s.startUsed = null; // file ki length dekh ke tay hoga
-  return s;
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
 }
 
 function playNewSong() {
   const g = state.game;
   const s = pickSong();
-  if (!s) { g.phase = "ready"; renderGame(); return toast("Koi chalne wala gaana nahi bacha. Songs tab check karo."); }
+  if (!s) { g.phase = "ready"; renderGame(); return toast("Koi chalne wala gaana nahi bacha. 'Gaane' tab check karo."); }
   g.song = s;
-  g.played.add(s.key);
+  g.played.add(s.id);
   g.replaysLeft = state.settings.replay;
-  startClip(false);
+  g.hint = false;
+  const m = state.settings.mode;
+  g.kind = m === "speaker" ? "speaker" : m === "ringtune" ? "ringtune" : (Math.random() < 0.5 ? "ringtune" : "speaker");
+  if (g.kind === "ringtune" && s.ringOk === false) g.kind = "speaker";
+  startRing();
 }
 
-function startClip(isReplay) {
+// Ringtone tayyar karo → vibrate → bajao
+async function startRing() {
   const g = state.game;
-  clearTimers();
-  g.adWait = false;
-  pending = "game";
+  clearTimeout(stopTimer);
+  clearInterval(tickTimer);
+  ring.stop();
+  const my = ++g.token;
   g.phase = "loading";
   renderGame();
-  if (g.song.src === "local") return startLocalClip();
-  startYtClip(isReplay);
-}
-
-// Common: asli gaana shuru ho gaya → clip timer chalao
-function beginClip() {
-  const g = state.game;
-  pending = null;
-  clearTimeout(loadTimer);
-  clearInterval(adPoll);
-  g.adWait = false;
-  g.phase = "playing";
-  renderGame();
-  runCountdown(state.settings.clip);
-  stopTimer = setTimeout(endClip, state.settings.clip * 1000);
-}
-
-// --- Local file ---
-function waitMeta(a) {
-  return new Promise((res, rej) => {
-    if (a.readyState >= 1) return res();
-    const ok = () => { off(); res(); };
-    const bad = () => { off(); rej(new Error("load")); };
-    const off = () => { a.removeEventListener("loadedmetadata", ok); a.removeEventListener("error", bad); };
-    a.addEventListener("loadedmetadata", ok);
-    a.addEventListener("error", bad);
-  });
-}
-async function startLocalClip() {
-  const g = state.game;
-  const s = g.song;
-  loadTimer = setTimeout(() => { if (pending === "game") onSongFail("File load nahi hui"); }, CONFIG.LOAD_TIMEOUT_MS);
+  const clip = state.settings.clip;
+  let notes = null;
   try {
-    const url = await getLocalUrl(s.fid);
-    if (pending !== "game") return;
-    if (audio.dataset.fid !== String(s.fid)) {
-      audio.src = url;
-      audio.dataset.fid = s.fid;
-      await waitMeta(audio);
+    if (g.kind === "ringtune") {
+      notes = await ring.melody(g.song, clip);
+      if (notes.length < 6) {
+        g.kind = "speaker";
+        toast("Is gaane ki dhun saaf nahi nikli — phone speaker se baj raha hai", 3000);
+      }
     }
-    const d = isFinite(audio.duration) ? audio.duration : 180;
-    if (s.startUsed == null) {
-      s.startUsed = hasStart(s.start) ? +s.start : randInt(Math.floor(d * 0.15), Math.max(Math.floor(d * 0.15), Math.floor(d * 0.55)));
-    }
-    audio.currentTime = Math.max(0, Math.min(s.startUsed, d - state.settings.clip - 1));
-    await audio.play();
-    if (pending !== "game") { audio.pause(); return; }
-    beginClip();
+    if (g.kind === "speaker") await ring.segment(g.song, clip);
   } catch (e) {
-    if (pending === "game") onSongFail("File nahi chali");
+    if (my !== g.token) return;
+    return onSongFail();
   }
+  if (my !== g.token) return;
+  g.phase = "ringing";
+  g.left = clip;
+  renderGame();
+  ring.vibrate();
+  await sleep(750);
+  if (my !== g.token) return;
+  let dur;
+  try {
+    dur = g.kind === "ringtune" ? ring.playNotes(notes, state.settings.voice) : await ring.playSpeaker(g.song, clip, state.settings.fx);
+  } catch (e) { return onSongFail(); }
+  if (my !== g.token) { ring.stop(); return; }
+  runCountdown(dur);
+  stopTimer = setTimeout(() => { if (my === g.token) endRing(); }, dur * 1000 + 150);
 }
-
-// --- YouTube (ad aaye toh mute + wait) ---
-function startYtClip(isReplay) {
+// Answer ke baad "ringtone phir se" (phase reveal hi rahega)
+async function playRingOnly() {
   const g = state.game;
-  if (!ytReady) {
-    pending = null;
-    g.phase = g.replaysLeft < state.settings.replay ? "played" : "ready";
-    renderGame();
-    return toast("YouTube player abhi ready nahi — internet check karo");
-  }
-  try { player.mute(); } catch (e) {}
-  if (isReplay) {
-    player.seekTo(g.song.startUsed, true);
-    player.playVideo();
-  } else {
-    player.loadVideoById({ videoId: g.song.id, startSeconds: g.song.startUsed });
-  }
-  watchForContent();
+  if (!g || !g.song) return;
+  const clip = state.settings.clip;
+  try {
+    if (g.kind === "ringtune" && g.song.notes) ring.playNotes(g.song.notes, state.settings.voice);
+    else await ring.playSpeaker(g.song, clip, state.settings.fx);
+  } catch (e) { toast("Ringtone nahi chali"); }
 }
-// Ad ke time video ka apna time aage nahi badhta. Jab time start ke paas badhne lage tab hi asli gaana maana jata hai.
-function watchForContent() {
+
+function onSongFail() {
   const g = state.game;
-  const start = g.song.startUsed;
-  const t0 = Date.now();
-  let lastT = null, adv = 0;
-  clearInterval(adPoll);
-  adPoll = setInterval(() => {
-    if (pending !== "game") { clearInterval(adPoll); return; }
-    let t = 0, st = -1;
-    try { t = player.getCurrentTime(); st = player.getPlayerState(); } catch (e) {}
-    if (st === 1 && lastT !== null && t > lastT + 0.05 && t >= start - 1.5 && t <= start + 6) adv++;
-    else adv = 0;
-    lastT = t;
-    const elapsed = Date.now() - t0;
-    if (adv >= 2) {
-      clearInterval(adPoll);
-      try { player.unMute(); player.setVolume(100); } catch (e) {}
-      beginClip();
-      return;
-    }
-    if (!g.adWait && elapsed > 2500 && (st === 1 || st === 3)) { g.adWait = true; renderGame(); }
-    if (elapsed > CONFIG.LOAD_TIMEOUT_MS && (st === -1 || st === 5)) { clearInterval(adPoll); onSongFail("Load nahi hua"); return; }
-    if (elapsed > CONFIG.AD_WAIT_MS) { clearInterval(adPoll); onSongFail("Ad bahut lamba tha"); }
-  }, 200);
-}
-
-function onPlayerState(e) {
-  const S = YT.PlayerState;
-  if (e.data === S.PLAYING) {
-    if (pending === "test") {
-      pending = null;
-      clearTimeout(loadTimer);
-      const s = songs.find((x) => x.key === testKey);
-      if (s) { songStatus[s.key] = { ok: true, text: "✅ " + (player.getVideoData()?.title || "Chal raha hai") }; broken.delete(s.id); renderStatusCell(s.key); }
-      stopTimer = setTimeout(() => { try { player.pauseVideo(); } catch (err) {} }, 5000);
-    } else if (pending === "more") {
-      pending = null;
-      clearTimeout(loadTimer);
-      stopTimer = setTimeout(() => { try { player.pauseVideo(); } catch (err) {} }, 15000);
-    }
-  }
-  if (e.data === S.CUED && pending === "check" && checkResolve) {
-    const title = (player.getVideoData && player.getVideoData().title) || "";
-    checkResolve({ ok: true, text: "✅ " + (title || "Link sahi hai") });
-  }
-}
-
-function onPlayerError(e) {
-  const reason = { 2: "Galat link", 5: "Play nahi hua", 100: "Video hat gaya / private", 101: "Embed band hai", 150: "Embed band hai", 153: "Player error (file:// se mat kholo)" }[e.data] || "Error " + e.data;
-  if (pending === "check" && checkResolve) return checkResolve({ ok: false, text: "❌ " + reason });
-  if (pending === "test") {
-    pending = null; clearTimers();
-    const s = songs.find((x) => x.key === testKey);
-    if (s) { songStatus[s.key] = { ok: false, text: "❌ " + reason }; broken.add(s.id); renderStatusCell(s.key); }
-    return toast("❌ " + reason);
-  }
-  if (state.game && state.game.song && state.game.song.src === "youtube" &&
-      (pending === "game" || state.game.phase === "playing")) onSongFail(reason);
-}
-
-function onSongFail(reason) {
-  const g = state.game;
-  clearTimers();
-  pending = null;
-  pauseAll();
-  if (g.song) {
-    broken.add(g.song.src === "local" ? g.song.key : g.song.id);
-    songStatus[g.song.key] = { ok: false, text: "❌ " + reason };
-  }
+  ring.stop();
+  if (g.song) broken.add(g.song.id);
   g.failCount++;
   if (g.failCount >= 5) {
     g.phase = "ready";
     renderGame();
-    return toast("Gaane chal nahi rahe — Songs tab mein files/links check karo", 4000);
+    return toast("Gaane chal nahi rahe — 'Gaane' tab mein files check karo", 4000);
   }
-  toast(`"${g.song ? g.song.title : "Gaana"}" nahi chala (${reason}) — doosra laga rahe hain`);
+  toast(`"${g.song ? g.song.title : "Gaana"}" ki file nahi chali — doosra laga rahe hain`);
   playNewSong();
 }
 
-function endClip() {
+function endRing() {
   const g = state.game;
-  clearTimers();
-  pending = null;
-  pauseAll();
+  clearTimeout(stopTimer);
+  clearInterval(tickTimer);
+  g.token++;
+  ring.stop();
   $("#progressBar").style.width = "100%";
-  g.phase = "played";
+  g.phase = "rung";
   renderGame();
 }
 
 function runCountdown(sec) {
-  let left = sec;
+  const g = state.game;
   const t0 = performance.now();
-  $("#countdown").textContent = left;
   const bar = $("#progressBar");
   bar.style.transition = "none";
   bar.style.width = "0";
@@ -594,53 +804,80 @@ function runCountdown(sec) {
     bar.style.transition = `width ${sec}s linear`;
     bar.style.width = "100%";
   }));
+  clearInterval(tickTimer);
   tickTimer = setInterval(() => {
-    left = Math.max(0, sec - Math.floor((performance.now() - t0) / 1000));
-    $("#countdown").textContent = left;
+    g.left = Math.max(0, Math.ceil(sec - (performance.now() - t0) / 1000));
+    const el = $("#callTimer");
+    if (el) el.textContent = g.left;
   }, 200);
 }
 
-function playMore() {
+// Answer ke baad asli gaana (wahi hissa jahan se ringtone bani)
+async function playOriginal(sec) {
   const g = state.game;
-  if (!g.song) return;
-  clearTimers();
-  if (g.song.src === "local") {
-    try {
-      audio.currentTime = g.song.startUsed || 0;
-      audio.play().catch(() => {});
-      stopTimer = setTimeout(() => audio.pause(), 15000);
-    } catch (e) {}
-    return;
-  }
-  if (!ytReady) return;
-  try { player.unMute(); player.seekTo(g.song.startUsed, true); player.playVideo(); } catch (e) {}
-  stopTimer = setTimeout(() => { try { player.pauseVideo(); } catch (err) {} }, 15000);
+  if (!g || !g.song) return;
+  try {
+    const s = g.song;
+    const url = await getLocalUrl(s.id);
+    if (audio.dataset.fid !== String(s.id)) {
+      audio.src = url;
+      audio.dataset.fid = s.id;
+      await new Promise((res, rej) => {
+        if (audio.readyState >= 1) return res();
+        audio.addEventListener("loadedmetadata", res, { once: true });
+        audio.addEventListener("error", rej, { once: true });
+      });
+    }
+    const d = isFinite(audio.duration) ? audio.duration : 180;
+    const st = hasStart(s.start) ? +s.start : Math.floor(d * (CONFIG.AUTO_START || 0.3));
+    audio.currentTime = Math.max(0, Math.min(st, d - 2));
+    audio.volume = 1;
+    await audio.play();
+    clearTimeout(stopTimer);
+    stopTimer = setTimeout(() => fadeAudioOut(), sec * 1000);
+  } catch (e) { /* asli gaana na chale toh bhi game chalta rahe */ }
+}
+function fadeAudioOut() {
+  let v = audio.volume;
+  const iv = setInterval(() => {
+    v -= 0.08;
+    if (v <= 0) { clearInterval(iv); audio.pause(); audio.volume = 1; return; }
+    audio.volume = v;
+  }, 60);
 }
 
-// ---------- Songs screen: local files ----------
+// ---------- Gaane tab ----------
 function renderLocalTable() {
   const body = $("#localTable tbody");
-  $("#localSummary").textContent = localTracks.length ? `(${localTracks.length} files)` : "";
+  $("#localSummary").textContent = localTracks.length ? `(${localTracks.length})` : "";
   if (!localTracks.length) {
-    body.innerHTML = `<tr><td colspan="7" class="empty">Abhi koi file nahi — upar "Files chuno" ya "Poora folder" dabao</td></tr>`;
+    body.innerHTML = `<tr><td colspan="8" class="empty">Abhi koi gaana nahi — upar "Files chuno" ya "Poora folder" dabao</td></tr>`;
     return;
   }
-  body.innerHTML = localTracks.map((t, i) => {
-    const key = "f" + t.id;
-    const st = songStatus[key] ? esc(songStatus[key].text) : (broken.has(key) ? "❌ Nahi chali" : "📁 Ready");
-    return `<tr data-fid="${t.id}">
+  body.innerHTML = localTracks.map((t, i) => `<tr data-fid="${t.id}">
       <td>${i + 1}</td>
       <td><input class="f-title" type="text" value="${esc(t.title)}" title="${esc(t.file)}"></td>
       <td><input class="f-singer" type="text" value="${esc(t.singer)}" placeholder="Singer"></td>
+      <td><input class="f-movie" type="text" value="${esc(t.movie)}" placeholder="Movie (hint)"></td>
       <td><select class="f-lang"><option${t.lang === "Hindi" ? " selected" : ""}>Hindi</option><option${t.lang === "Punjabi" ? " selected" : ""}>Punjabi</option></select></td>
       <td><input class="start f-start" type="number" min="0" value="${hasStart(t.start) ? +t.start : ""}" placeholder="auto"></td>
-      <td><span class="status">${st}</span></td>
+      <td><span class="status">${esc(ringStatus(t))}</span></td>
       <td><div class="acts">
-        <button data-ltest="${t.id}" title="5 sec suno">▶</button>
+        <button data-lring="${t.id}" title="Ringtone suno">🔔</button>
+        <button data-lorig="${t.id}" title="Asli gaana suno (5 sec)">🔊</button>
+        <button data-lok="${t.id}" title="Ringtone theek hai" class="${t.ringOk === true ? "on" : ""}">✅</button>
+        <button data-lbad="${t.id}" title="Ringtone bekaar — speaker mode" class="${t.ringOk === false ? "on" : ""}">❌</button>
         <button data-ldel="${t.id}" title="Hatao">🗑</button>
       </div></td>
-    </tr>`;
-  }).join("");
+    </tr>`).join("");
+}
+function renderRow(id) {
+  const t = trackById(id);
+  const tr = document.querySelector(`#localTable tr[data-fid="${id}"]`);
+  if (!t || !tr) return renderLocalTable();
+  tr.querySelector(".status").textContent = ringStatus(t);
+  tr.querySelector("[data-lok]").classList.toggle("on", t.ringOk === true);
+  tr.querySelector("[data-lbad]").classList.toggle("on", t.ringOk === false);
 }
 $("#fileInput").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
 $("#folderInput").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
@@ -652,32 +889,52 @@ $("#localTable").addEventListener("change", (e) => {
   const c = e.target.classList;
   if (c.contains("f-title")) updateTrack(id, { title: e.target.value.trim() || "Bina naam" });
   if (c.contains("f-singer")) updateTrack(id, { singer: e.target.value.trim() });
+  if (c.contains("f-movie")) updateTrack(id, { movie: e.target.value.trim() });
   if (c.contains("f-lang")) updateTrack(id, { lang: e.target.value }).then(renderSetup);
-  if (c.contains("f-start")) updateTrack(id, { start: e.target.value === "" ? null : Math.max(0, +e.target.value) });
+  if (c.contains("f-start")) {
+    updateTrack(id, { start: e.target.value === "" ? null : Math.max(0, +e.target.value), notes: null, notesKey: null, ringOk: null }).then(() => renderRow(id));
+  }
 });
 $("#localTable").addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-ltest]");
-  if (t) {
-    const tr = localTracks.find((x) => x.id === t.dataset.ltest);
-    if (!tr) return;
+  const b = e.target.closest("button");
+  if (!b) return;
+  const tr = b.closest("tr[data-fid]");
+  const t = tr && trackById(tr.dataset.fid);
+  if (!t) return;
+  if (b.dataset.lring) {
+    stopAudio();
+    const st = tr.querySelector(".status");
+    st.textContent = "⏳ Ringtone ban rahi hai…";
+    try {
+      const notes = await ring.melody(t, state.settings.clip);
+      renderRow(t.id);
+      if (notes.length < 6) return toast("Is gaane ki dhun saaf nahi nikli — Start second badal ke try karo, warna speaker mode chalega", 4000);
+      ring.playNotes(notes, state.settings.voice);
+      toast(`🔔 ${t.title} — ${VOICE_NAMES[state.settings.voice]}`);
+    } catch (err) {
+      broken.add(t.id);
+      renderRow(t.id);
+      toast("Ye file nahi chali");
+    }
+  } else if (b.dataset.lorig) {
     stopAudio();
     try {
-      audio.src = await getLocalUrl(tr.id);
-      audio.dataset.fid = tr.id;
-      await waitMeta(audio);
-      audio.currentTime = hasStart(tr.start) ? +tr.start : Math.floor((audio.duration || 100) * 0.3);
+      audio.src = await getLocalUrl(t.id);
+      audio.dataset.fid = t.id;
+      await new Promise((res, rej) => { audio.addEventListener("loadedmetadata", res, { once: true }); audio.addEventListener("error", rej, { once: true }); });
+      const d = isFinite(audio.duration) ? audio.duration : 180;
+      audio.currentTime = hasStart(t.start) ? +t.start : Math.floor(d * (CONFIG.AUTO_START || 0.3));
       await audio.play();
       stopTimer = setTimeout(() => audio.pause(), 5000);
-      toast(`▶ ${tr.title} — 5 sec`);
-    } catch (err) {
-      songStatus["f" + tr.id] = { ok: false, text: "❌ File nahi chali" };
-      renderLocalTable();
-    }
-    return;
-  }
-  const d = e.target.closest("[data-ldel]");
-  if (d && confirm("Ye file list se hatani hai?")) {
-    const id = d.dataset.ldel;
+    } catch (err) { toast("Ye file nahi chali"); }
+  } else if (b.dataset.lok) {
+    await updateTrack(t.id, { ringOk: t.ringOk === true ? null : true });
+    renderRow(t.id); renderSetup();
+  } else if (b.dataset.lbad) {
+    await updateTrack(t.id, { ringOk: t.ringOk === false ? null : false });
+    renderRow(t.id); renderSetup();
+  } else if (b.dataset.ldel && confirm("Ye gaana list se hatana hai?")) {
+    const id = t.id;
     try { await idb.del("meta", id); await idb.del("blobs", id); } catch (err) {}
     if (urlCache[id]) { URL.revokeObjectURL(urlCache[id]); delete urlCache[id]; }
     await loadLocalTracks();
@@ -686,148 +943,27 @@ $("#localTable").addEventListener("click", async (e) => {
   }
 });
 
-// ---------- Songs screen: YouTube ----------
-function renderSongTable() {
-  $("#songTable tbody").innerHTML = songs.map((s, i) => `
-    <tr data-key="${s.key}">
-      <td>${i + 1}</td>
-      <td><div class="t">${esc(s.title)}</div><div class="s">${esc(s.singer)}${s.movie ? " · " + esc(s.movie) : ""}</div></td>
-      <td><span class="lang-tag ${esc(s.lang)}">${esc(s.lang)}</span></td>
-      <td><input class="link" type="text" value="${esc(s.yt || "")}" placeholder="Instrumental ka link paste karo"></td>
-      <td><input class="start" type="number" min="0" value="${hasStart(s.start) ? +s.start : ""}" placeholder="auto"></td>
-      <td><span class="status">${statusText(s)}</span></td>
-      <td><div class="acts">
-        <a href="https://www.youtube.com/results?search_query=${encodeURIComponent(s.title + " " + s.singer + " instrumental")}" target="_blank" rel="noopener" title="YouTube pe instrumental dhundho">🔍</a>
-        <button data-test="${s.key}" title="5 sec suno">▶</button>
-        ${s.custom ? `<button data-del="${s.key}" title="Hatao">🗑</button>` : ""}
-      </div></td>
-    </tr>`).join("");
-  $("#songsSummary").textContent = `(${songs.filter((s) => s.id).length}/${songs.length} mein link hai)`;
-}
-function statusText(s) {
-  if (!s.id) return s.yt ? "⚠️ Link samajh nahi aaya" : "⚪ Link nahi";
-  if (songStatus[s.key]) return esc(songStatus[s.key].text);
-  return broken.has(s.id) ? "❌ Nahi chala" : "— check nahi kiya";
-}
-function renderStatusCell(key) {
-  const s = songs.find((x) => x.key === key);
-  const cell = document.querySelector(`#songTable tr[data-key="${key}"] .status`);
-  if (s && cell) cell.innerHTML = statusText(s);
-}
-
-$("#songTable").addEventListener("change", (e) => {
-  const tr = e.target.closest("tr[data-key]");
-  if (!tr) return;
-  const key = tr.dataset.key;
-  if (e.target.classList.contains("link")) {
-    delete songStatus[key];
-    updateSong(key, { yt: e.target.value.trim() });
-    const s = songs.find((x) => x.key === key);
-    if (s && s.id) broken.delete(s.id);
-    if (e.target.value.trim() && !(s && s.id)) toast("Ye YouTube link sahi nahi lag raha");
-    renderStatusCell(key);
-    $("#songsSummary").textContent = `(${songs.filter((x) => x.id).length}/${songs.length} mein link hai)`;
-  }
-  if (e.target.classList.contains("start")) {
-    const v = e.target.value;
-    updateSong(key, { start: v === "" ? null : Math.max(0, +v) });
-  }
-});
-
-$("#songTable").addEventListener("click", (e) => {
-  const t = e.target.closest("[data-test]");
-  if (t) {
-    const s = songs.find((x) => x.key === t.dataset.test);
-    if (!s || !s.id) return toast("Pehle link daalo");
-    if (!ytReady) return toast("YouTube player abhi ready nahi");
-    stopAudio();
-    pending = "test";
-    testKey = s.key;
-    try { player.unMute(); } catch (err) {}
-    player.loadVideoById({ videoId: s.id, startSeconds: hasStart(s.start) ? +s.start : 40 });
-    loadTimer = setTimeout(() => { if (pending === "test") { pending = null; songStatus[s.key] = { ok: null, text: "⚠️ Load nahi hua" }; renderStatusCell(s.key); } }, CONFIG.LOAD_TIMEOUT_MS);
-    toast(`▶ ${s.title} — 5 sec`);
-    return;
-  }
-  const d = e.target.closest("[data-del]");
-  if (d && confirm("Ye gaana hatana hai?")) {
-    const custom = store.get("gp_custom", []);
-    custom.splice(+d.dataset.del.slice(1), 1);
-    store.set("gp_custom", custom);
-    songs = loadSongs();
-    renderSongTable();
-  }
-});
-
-$("#checkAllBtn").addEventListener("click", async () => {
-  if (!ytReady) return toast("YouTube player abhi ready nahi");
-  const btn = $("#checkAllBtn");
-  btn.disabled = true;
+// Party se pehle sab ki ringtone ek saath bana lo
+$("#buildAllBtn").addEventListener("click", async () => {
+  const btn = $("#buildAllBtn");
+  if (!localTracks.length) return toast("Pehle gaane daalo");
   stopAudio();
-  const list = songs.filter((s) => s.id);
-  let ok = 0, bad = 0;
+  btn.disabled = true;
+  const list = localTracks.filter((t) => !(t.notes && t.notesKey === ringKey(t)));
+  let ok = 0, weak = 0;
   for (let i = 0; i < list.length; i++) {
-    const s = list[i];
-    btn.textContent = `Check ho raha hai ${i + 1}/${list.length}…`;
-    const r = await checkOne(s);
-    songStatus[s.key] = r;
-    if (r.ok === false) { broken.add(s.id); bad++; } else if (r.ok) { broken.delete(s.id); ok++; }
-    renderStatusCell(s.key);
+    btn.textContent = `⏳ Ban rahi hai ${i + 1}/${list.length}…`;
+    try {
+      const n = await ring.melody(list[i], state.settings.clip);
+      if (n.length >= 6) ok++; else weak++;
+    } catch (e) { broken.add(list[i].id); weak++; }
+    renderRow(list[i].id);
+    await sleep(30);
   }
-  pending = null;
-  try { player.stopVideo(); } catch (e) {}
   btn.disabled = false;
-  btn.textContent = "✅ Sab check karo";
-  toast(`Check ho gaya: ${ok} sahi, ${bad} problem. Title match zaroor dekh lena.`, 4000);
-});
-function checkOne(s) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => done({ ok: null, text: "⚠️ Timeout" }), 8000);
-    function done(r) { clearTimeout(timer); checkResolve = null; setTimeout(() => resolve(r), 250); }
-    checkResolve = done;
-    pending = "check";
-    try { player.cueVideoById({ videoId: s.id, startSeconds: 0 }); }
-    catch (e) { done({ ok: null, text: "⚠️ Check nahi hua" }); }
-  });
-}
-
-$("#copyConfigBtn").addEventListener("click", () => {
-  const line = (s) => `  { title: ${JSON.stringify(s.title)}, singer: ${JSON.stringify(s.singer || "")}, movie: ${JSON.stringify(s.movie || "")}, lang: ${JSON.stringify(s.lang)}, yt: ${JSON.stringify(s.id || "")}, start: ${hasStart(s.start) ? +s.start : "null"} }`;
-  const txt = "const SONGS = [\n" + songs.map(line).join(",\n") + "\n];\n";
-  const done = () => toast("📋 Copy ho gaya — config.js mein SONGS wala hissa replace kar do");
-  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(txt).then(done).catch(() => fallbackCopy(txt, done));
-  else fallbackCopy(txt, done);
-});
-function fallbackCopy(txt, cb) {
-  const ta = document.createElement("textarea");
-  ta.value = txt;
-  document.body.appendChild(ta);
-  ta.select();
-  try { document.execCommand("copy"); cb(); } catch (e) { toast("Copy nahi hua"); }
-  ta.remove();
-}
-$("#resetChangesBtn").addEventListener("click", () => {
-  if (!confirm("YouTube list ke saare browser changes (links + naye gaane) hata dein? config.js wali list wapas aa jayegi.")) return;
-  store.set("gp_overrides", {});
-  store.set("gp_custom", []);
-  songs = loadSongs();
-  Object.keys(songStatus).forEach((k) => { if (!k.startsWith("f")) delete songStatus[k]; });
-  renderSongTable();
-  toast("Reset ho gaya");
-});
-$("#addSongBtn").addEventListener("click", () => {
-  const title = $("#newTitle").value.trim();
-  const link = $("#newLink").value.trim();
-  if (!title) return toast("Gaane ka naam daalo");
-  if (!parseYtId(link)) return toast("Sahi YouTube link daalo");
-  const startV = $("#newStart").value;
-  const custom = store.get("gp_custom", []);
-  custom.push({ title, singer: $("#newSinger").value.trim(), movie: $("#newMovie").value.trim(), lang: $("#newLang").value, yt: link, start: startV === "" ? null : Math.max(0, +startV) });
-  store.set("gp_custom", custom);
-  songs = loadSongs();
-  ["#newTitle", "#newSinger", "#newMovie", "#newLink", "#newStart"].forEach((s) => ($(s).value = ""));
-  renderSongTable();
-  toast(`➕ "${title}" add ho gaya`);
+  btn.textContent = "🔔 Sab ki ringtone banao";
+  renderSetup();
+  toast(list.length ? `Ho gaya: ${ok} ringtone bani, ${weak} pe speaker mode chalega. Ab 🔔 se sun ke ✅ karo.` : "Sab ki ringtone pehle se bani hai ✅", 4500);
 });
 
 // ---------- Fireworks ----------
@@ -921,8 +1057,8 @@ const music = {
   urlFor(m) { return PARTY.INTRO_MUSIC || (PARTY.MUSIC_FILES || {})[m] || ""; },
 
   // Browser bina click ke awaaz nahi chalne deta — isliye kisi click pe hi unlock
-  unlock() {
-    if (!this.enabled()) return;
+  unlock(force) {                      // force = ringtone ke liye (music band ho tab bhi audio chahiye)
+    if (!this.enabled() && !force) return;
     try {
       if (!this.ctx) {
         const AC = window.AudioContext || window.webkitAudioContext;
@@ -947,6 +1083,7 @@ const music = {
       }
       if (this.ctx && this.ctx.state === "suspended") this.ctx.resume();
     } catch (e) { this.ctx = null; }
+    if (!this.enabled()) return;
     // mp3 tracks pehle se load kar lo taaki scene badalte hi turant bajein
     ["title", "funny", "love", "celebrate", "calm"].forEach((m) => this.trackFor(m));
   },
@@ -1718,12 +1855,10 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeCine();
 });
 
+
 // ---------- Init ----------
 $("#appName").textContent = CONFIG.APP_NAME;
 $("#splashTitle").textContent = CONFIG.APP_NAME;
-if (location.protocol === "file:") {
-  setTimeout(() => toast("⚠️ YouTube mode ke liye app ko GitHub Pages ya local server se kholo", 6000), 800);
-}
 (async function init() {
   await loadLocalTracks();
   renderSetup();
