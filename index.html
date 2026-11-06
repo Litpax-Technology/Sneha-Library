@@ -159,17 +159,19 @@
               <label class="btn">＋ Files chuno<input id="fileInput" type="file" accept="audio/*" multiple hidden></label>
               <label class="btn ghost">📂 Poora folder<input id="folderInput" type="file" webkitdirectory multiple hidden></label>
               <select id="uploadLang" class="inline-select" aria-label="Nayi files ki language">
+                <option value="auto">Language: Auto</option>
                 <option>Hindi</option>
                 <option>Punjabi</option>
               </select>
             </div>
           </div>
           <p class="muted small">
-            Gaano ki mp3 files chuno. File ka naam <b>"Gaana - Singer - Movie.mp3"</b> rakhoge toh teeno khud bhar jayenge (movie hint mein kaam aati hai).
+            Gaano ki mp3 files chuno. Gaane ka naam, singer aur album file ke andar se khud bhar jaate hain, aur "(RiskyJatt.Com)" jaise site ke naam hat jaate hain. Kuch galat ho toh table mein seedha badal do.
             Files sirf isi laptop ke browser mein save rehti hain, kahin upload nahi hoti.
           </p>
           <div class="ring-tools">
             <button id="buildAllBtn" class="btn">🔔 Sab ki ringtone banao</button>
+            <button id="fillTagsBtn" class="btn ghost" title="Pehle se daale gaano mein khaali singer/movie file se bharo">🏷 Naam/singer file se bharo</button>
             <span id="voiceNow" class="muted small"></span>
           </div>
           <p class="muted small">
