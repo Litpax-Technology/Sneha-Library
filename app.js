@@ -902,44 +902,53 @@ function fxLoop(t) {
 }
 
 
-// ---------- Cinematic music (Web Audio se live banta hai — koi mp3 nahi, offline chalega) ----------
+// ---------- Cinematic music ----------
+// 1) config.js ke MUSIC_FILES mein us mood ki mp3 ho → woh bajegi (asli instrumental)
+// 2) mp3 nahi hai / load nahi hui → browser khud live music banayega (backup)
+// Sound effects: SFX_FILES mein mp3 ho toh woh, warna live bane effects
 const TONIC = 146.83; // D3 = Sa
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const hz = (semi) => TONIC * Math.pow(2, semi / 12);
+const FILE_VOL = 0.6;   // mp3 music ki volume
+const DUCK = 0.4;       // dialogue chalte waqt music kitna dheema ho
 
 const music = {
-  ctx: null, out: null, verb: null, noise: null, layer: null, mood: null, file: null, fileFade: null,
+  ctx: null, out: null, bus: null, verb: null, noise: null,
+  layer: null, mood: null, active: null, tracks: {}, badUrls: new Set(), tick: null,
+  duckF: 1,
   on: store.get("gp_music", true),
   enabled() { return PARTY.MUSIC !== false; },
+  urlFor(m) { return PARTY.INTRO_MUSIC || (PARTY.MUSIC_FILES || {})[m] || ""; },
 
   // Browser bina click ke awaaz nahi chalne deta — isliye kisi click pe hi unlock
   unlock() {
     if (!this.enabled()) return;
-    if (PARTY.INTRO_MUSIC) {
-      if (!this.file) { this.file = new Audio(PARTY.INTRO_MUSIC); this.file.loop = true; this.file.volume = 0; }
-      return;
-    }
     try {
       if (!this.ctx) {
         const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
-        const c = (this.ctx = new AC());
-        this.out = c.createGain();
-        this.out.gain.value = this.on ? 0.85 : 0;
-        const comp = c.createDynamicsCompressor();
-        comp.threshold.value = -16; comp.ratio.value = 4;
-        this.out.connect(comp); comp.connect(c.destination);
-        this.verb = c.createConvolver();
-        this.verb.buffer = this.impulse(3.4);
-        const wet = c.createGain(); wet.gain.value = 0.4;
-        this.verb.connect(wet); wet.connect(this.out);
-        const nb = c.createBuffer(1, c.sampleRate, c.sampleRate);
-        const d = nb.getChannelData(0);
-        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-        this.noise = nb;
+        if (AC) {
+          const c = (this.ctx = new AC());
+          this.out = c.createGain();
+          this.out.gain.value = this.on ? 0.85 : 0;
+          const comp = c.createDynamicsCompressor();
+          comp.threshold.value = -16; comp.ratio.value = 4;
+          this.out.connect(comp); comp.connect(c.destination);
+          this.verb = c.createConvolver();
+          this.verb.buffer = this.impulse(3.4);
+          const wet = c.createGain(); wet.gain.value = 0.4;
+          this.verb.connect(wet); wet.connect(this.out);
+          this.bus = c.createGain();           // sirf music (ducking isi pe)
+          this.bus.connect(this.out); this.bus.connect(this.verb);
+          const nb = c.createBuffer(1, c.sampleRate, c.sampleRate);
+          const d = nb.getChannelData(0);
+          for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+          this.noise = nb;
+        }
       }
-      if (this.ctx.state === "suspended") this.ctx.resume();
+      if (this.ctx && this.ctx.state === "suspended") this.ctx.resume();
     } catch (e) { this.ctx = null; }
+    // mp3 tracks pehle se load kar lo taaki scene badalte hi turant bajein
+    ["title", "funny", "love", "celebrate", "calm"].forEach((m) => this.trackFor(m));
   },
   impulse(sec) {
     const c = this.ctx, len = Math.floor(c.sampleRate * sec), b = c.createBuffer(2, len, c.sampleRate);
@@ -950,19 +959,70 @@ const music = {
     return b;
   },
 
+  // --- mp3 tracks (volume fade JS se, taaki file:// pe bhi chale) ---
+  trackFor(m) {
+    const url = this.urlFor(m);
+    if (!url || this.badUrls.has(url)) return null;
+    if (this.tracks[url]) return this.tracks[url];
+    const el = new Audio(url);
+    el.loop = true; el.preload = "auto"; el.volume = 0;
+    const tr = { el, url, cur: 0 };
+    el.addEventListener("error", () => {
+      this.badUrls.add(url);
+      delete this.tracks[url];
+      if (this.active === tr) {          // file nahi chali → live music pe shift
+        this.active = null;
+        if (this.mood && this.ctx && MOODS[this.mood]) this.layer = this.makeLayer(MOODS[this.mood]);
+      }
+    });
+    return (this.tracks[url] = tr);
+  },
+  runTick() {
+    if (this.tick) return;
+    let last = performance.now();
+    this.tick = setInterval(() => {
+      const now = performance.now(), step = (now - last) / 1500; // ~1.5 sec fade
+      last = now;
+      let busy = false;
+      Object.values(this.tracks).forEach((tr) => {
+        const goal = tr === this.active ? FILE_VOL * this.duckF * (this.on ? 1 : 0) : 0;
+        if (goal > 0 && tr.el.paused) tr.el.play().catch(() => {});
+        tr.cur = tr.cur < goal ? Math.min(goal, tr.cur + step) : Math.max(goal, tr.cur - step);
+        tr.el.volume = Math.max(0, Math.min(1, tr.cur));
+        if (goal === 0 && tr.cur === 0 && !tr.el.paused) tr.el.pause();
+        if (tr.cur !== goal || !tr.el.paused) busy = true;
+      });
+      if (!busy) { clearInterval(this.tick); this.tick = null; }
+    }, 50);
+  },
+
   setMood(m) {
-    if (!this.enabled()) return;
-    if (this.file) { this.fadeFile(this.on ? 0.6 : 0, 1.5); return; }
-    if (!this.ctx || m === this.mood) return;
-    if (this.layer) this.fadeOut(this.layer, 1.6);
+    if (!this.enabled() || m === this.mood) return;
     this.mood = m;
-    this.layer = MOODS[m] ? this.makeLayer(MOODS[m]) : null;
+    if (this.layer) { this.fadeOut(this.layer, 1.6); this.layer = null; }
+    const tr = this.trackFor(m);
+    if (tr && tr !== this.active && tr.cur === 0) { try { tr.el.currentTime = 0; } catch (e) {} }
+    this.active = tr;
+    if (!tr && this.ctx && MOODS[m]) this.layer = this.makeLayer(MOODS[m]);
+    this.runTick();
   },
   stop(sec = 1.5) {
     this.mood = null;
-    if (this.file) this.fadeFile(0, sec);
-    if (this.layer) this.fadeOut(this.layer, sec);
-    this.layer = null;
+    this.active = null;
+    this.duck(false);
+    if (this.layer) { this.fadeOut(this.layer, sec); this.layer = null; }
+    this.runTick();
+  },
+  // Dialogue ke time music thoda neeche, taaki baat saaf sunai de
+  duck(on) {
+    this.duckF = on ? DUCK : 1;
+    if (this.bus) {
+      const t = this.ctx.currentTime;
+      this.bus.gain.cancelScheduledValues(t);
+      this.bus.gain.setValueAtTime(this.bus.gain.value, t);
+      this.bus.gain.linearRampToValueAtTime(this.duckF, t + 0.6);
+    }
+    this.runTick();
   },
   toggle() {
     this.on = !this.on;
@@ -973,27 +1033,15 @@ const music = {
       this.out.gain.setValueAtTime(this.out.gain.value, t);
       this.out.gain.linearRampToValueAtTime(this.on ? 0.85 : 0, t + 0.4);
     }
-    if (this.file && document.body.classList.contains("cine-mode")) this.fadeFile(this.on ? 0.6 : 0, 0.4);
+    this.runTick();
     return this.on;
-  },
-  fadeFile(to, sec) {
-    const a = this.file;
-    clearInterval(this.fileFade);
-    if (to > 0 && a.paused) a.play().catch(() => {});
-    const from = a.volume, t0 = performance.now();
-    this.fileFade = setInterval(() => {
-      const p = Math.min(1, (performance.now() - t0) / (sec * 1000));
-      a.volume = Math.max(0, Math.min(1, from + (to - from) * p));
-      if (p >= 1) { clearInterval(this.fileFade); if (to === 0) a.pause(); }
-    }, 50);
   },
 
   makeLayer(P) {
     const c = this.ctx, g = c.createGain(), t = c.currentTime;
     g.gain.setValueAtTime(0.0001, t);
     g.gain.linearRampToValueAtTime(1, t + 1.6);
-    g.connect(this.out);
-    g.connect(this.verb);
+    g.connect(this.bus);
     const L = { g, srcs: [], iv: null, i: 0 };
     try { if (P.setup) P.setup(this, L, t + 0.05); } catch (e) {}
     if (P.step) {
@@ -1113,38 +1161,154 @@ const music = {
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + dur * 0.9); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.4);
     this.noiseSrc(t, dur + 0.5).connect(bp); bp.connect(g); g.connect(L.g);
   },
+  tone(type, f, t, dur, vol, dest, lpf) {        // ek simple note (sfx ke liye)
+    const o = this.osc(type, f, t);
+    const e = this.env(t, 0.01, Math.max(0, dur - 0.05), 0.15, vol);
+    if (lpf) { const lp = this.filter("lowpass", lpf); o.connect(lp); lp.connect(e); } else o.connect(e);
+    e.connect(dest); o.start(t); o.stop(t + dur + 0.3);
+    return o;
+  },
+  cymbal(dest, t, vol = 0.09, dec = 1.6) {
+    const hp = this.filter("highpass", 5500);
+    const e = this.env(t, 0.003, 0, dec, vol);
+    this.noiseSrc(t, dec + 0.2).connect(hp); hp.connect(e); e.connect(dest);
+  },
 
-  // Dialogue ke saath chhote sound effects
+  // --- Sound effects (dialogue / scene ke hisaab se) ---
   sfx(name) {
-    if (!this.ctx || !this.on || !this.enabled()) return;
-    const c = this.ctx, t = c.currentTime + 0.03, L = { g: this.out, srcs: [] };
-    if (name === "offkey") {
-      const o = this.osc("sawtooth", 330, t);
-      [[0.4, 365], [0.8, 300], [1.2, 390], [1.7, 270], [2.3, 240]].forEach(([dt, f]) => o.frequency.linearRampToValueAtTime(f, t + dt));
-      const vib = c.createOscillator(); vib.frequency.value = 7;
-      const vg = c.createGain(); vg.gain.value = 14;
-      vib.connect(vg); vg.connect(o.frequency);
-      const lp = this.filter("lowpass", 1400);
-      const e = this.env(t, 0.08, 2.1, 0.4, 0.07);
-      o.connect(lp); lp.connect(e); e.connect(this.out);
-      o.start(t); vib.start(t); o.stop(t + 2.8); vib.stop(t + 2.8);
-    } else if (name === "wah") {
-      [[0, 293.7, 0.32], [0.38, 277.2, 0.32], [0.76, 261.6, 0.32], [1.14, 246.9, 1.1]].forEach(([dt, f, d], k) => {
-        const s = t + dt, o = this.osc("sawtooth", f, s);
-        const lp = this.filter("lowpass", 300, 6);
-        lp.frequency.setValueAtTime(300, s); lp.frequency.linearRampToValueAtTime(1300, s + 0.12); lp.frequency.linearRampToValueAtTime(400, s + d);
-        if (k === 3) {
-          const v = c.createOscillator(); v.frequency.value = 6;
-          const vg = c.createGain(); vg.gain.value = 6;
-          v.connect(vg); vg.connect(o.frequency); v.start(s); v.stop(s + d + 0.3);
+    if (!this.enabled() || !this.on || !name) return;
+    const fileUrl = (PARTY.SFX_FILES || {})[name];
+    if (fileUrl && !this.badUrls.has(fileUrl)) {
+      const a = new Audio(fileUrl);
+      a.volume = 0.85;
+      a.play().catch(() => { this.badUrls.add(fileUrl); this.synthSfx(name); });
+      return;
+    }
+    this.synthSfx(name);
+  },
+  synthSfx(name) {
+    if (!this.ctx) return;
+    const c = this.ctx, t = c.currentTime + 0.03, out = this.out, L = { g: out, srcs: [] };
+    switch (name) {
+      case "whoosh": {                 // scene badalte waqt
+        const bp = this.filter("bandpass", 400, 1.2);
+        bp.frequency.setValueAtTime(400, t); bp.frequency.exponentialRampToValueAtTime(3200, t + 0.35); bp.frequency.exponentialRampToValueAtTime(700, t + 0.7);
+        const e = this.env(t, 0.25, 0.1, 0.4, 0.13);
+        const pan = c.createStereoPanner ? c.createStereoPanner() : null;
+        const src = this.noiseSrc(t, 0.9);
+        src.connect(bp); bp.connect(e);
+        if (pan) { pan.pan.setValueAtTime(-0.8, t); pan.pan.linearRampToValueAtTime(0.8, t + 0.7); e.connect(pan); pan.connect(out); } else e.connect(out);
+        break;
+      }
+      case "pop": {                    // bubble aaya
+        const o = this.osc("sine", 520, t); o.frequency.exponentialRampToValueAtTime(1100, t + 0.06);
+        const e = this.env(t, 0.004, 0, 0.09, 0.07);
+        o.connect(e); e.connect(out); o.start(t); o.stop(t + 0.15);
+        break;
+      }
+      case "boing": {                  // comedy spring
+        const o = this.osc("sine", 160, t); o.frequency.exponentialRampToValueAtTime(420, t + 0.12); o.frequency.exponentialRampToValueAtTime(220, t + 0.7);
+        const v = c.createOscillator(); v.frequency.value = 16;
+        const vg = c.createGain(); vg.gain.setValueAtTime(90, t); vg.gain.exponentialRampToValueAtTime(1, t + 0.7);
+        v.connect(vg); vg.connect(o.frequency);
+        const e = this.env(t, 0.01, 0.15, 0.55, 0.13);
+        o.connect(e); e.connect(out); o.start(t); v.start(t); o.stop(t + 0.9); v.stop(t + 0.9);
+        break;
+      }
+      case "rimshot": {                // ba-dum-tss (joke ke baad)
+        [[0, 190, 120], [0.17, 140, 90]].forEach(([dt, f0, f1]) => {
+          const o = this.osc("sine", f0, t + dt); o.frequency.exponentialRampToValueAtTime(f1, t + dt + 0.15);
+          const e = this.env(t + dt, 0.003, 0.02, 0.25, 0.28);
+          o.connect(e); e.connect(out); o.start(t + dt); o.stop(t + dt + 0.4);
+          const bp = this.filter("bandpass", 1800, 1);
+          const ne = this.env(t + dt, 0.002, 0, 0.1, 0.08);
+          this.noiseSrc(t + dt, 0.15).connect(bp); bp.connect(ne); ne.connect(out);
+        });
+        this.cymbal(out, t + 0.36, 0.11, 1.3);
+        break;
+      }
+      case "dun": {                    // dun dun duuun (dramatic)
+        [[0, 0, 0.22], [0.32, 0, 0.22], [0.64, -4, 1.5]].forEach(([dt, s, d]) => {
+          [s - 12, s - 5, s].forEach((x) => this.tone("sawtooth", hz(x), t + dt, d, 0.05, out, 900));
+        });
+        this.boom(L, t + 0.64, 0.45);
+        break;
+      }
+      case "scratch": {                // record scratch — music ruk jaata hai
+        const bp = this.filter("bandpass", 900, 4);
+        [[0, 900], [0.08, 2600], [0.16, 700], [0.26, 2200], [0.38, 500]].forEach(([dt, f]) => bp.frequency.linearRampToValueAtTime(f, t + dt));
+        const e = this.env(t, 0.01, 0.3, 0.12, 0.2);
+        this.noiseSrc(t, 0.5).connect(bp); bp.connect(e); e.connect(out);
+        if (this.bus) {
+          this.bus.gain.cancelScheduledValues(t);
+          this.bus.gain.setValueAtTime(0.0001, t + 0.05);
+          this.bus.gain.linearRampToValueAtTime(this.duckF, t + 2.2);
         }
-        const e = this.env(s, 0.02, d - 0.05, 0.2, 0.06);
-        o.connect(lp); lp.connect(e); e.connect(this.out); o.start(s); o.stop(s + d + 0.3);
-      });
-    } else if (name === "ting") {
-      [24, 31, 36].forEach((s, k) => this.bell(L, s, t + k * 0.09, 0.07));
-    } else if (name === "aww") {
-      [19, 24, 28, 31].forEach((s, k) => this.bell(L, s, t + k * 0.16, 0.05));
+        if (this.active) { this.active.cur = 0; this.active.el.volume = 0; this.runTick(); }
+        break;
+      }
+      case "tick": this.bell(L, 24, t, 0.05); this.bell(L, 31, t + 0.07, 0.035); break;
+      case "buzz":
+        [0, 0.2].forEach((dt) => this.tone("square", 110, t + dt, 0.14, 0.05, out, 1400));
+        break;
+      case "heartbeat":
+        [0, 0.9, 1.8].forEach((k) => [0, 0.22].forEach((dt, j) => {
+          const s = t + k + dt, o = this.osc("sine", j ? 55 : 65, s);
+          o.frequency.exponentialRampToValueAtTime(38, s + 0.15);
+          const e = this.env(s, 0.005, 0.02, 0.25, j ? 0.3 : 0.4);
+          o.connect(e); e.connect(out); o.start(s); o.stop(s + 0.35);
+        }));
+        break;
+      case "sparkle":
+        for (let k = 0; k < 7; k++) this.bell(L, pick([24, 26, 28, 31, 33, 36]), t + k * 0.07 + Math.random() * 0.03, 0.035);
+        break;
+      case "harp":                     // romantic gliss
+        [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26, 28].forEach((s, k) => this.pluck(L, s, t + k * 0.06, 0.06, 1.6));
+        break;
+      case "tada": {                   // drumroll + dhamaka + chord
+        for (let k = 0; k < 18; k++) {
+          const s = t + 1.1 * (1 - Math.pow(1 - k / 18, 1.6));
+          this.drum(L, s, "ta", 0.4 + k * 0.035);
+        }
+        const hit = t + 1.2;
+        this.boom(L, hit, 0.45);
+        this.cymbal(out, hit, 0.12, 2);
+        [12, 16, 19, 24].forEach((s) => this.bell(L, s + 12, hit, 0.05));
+        [0, 4, 7, 12].forEach((s) => this.tone("sawtooth", hz(s), hit, 0.9, 0.035, out, 2200));
+        break;
+      }
+      case "mindblown":
+        this.boom(L, t, 0.4);
+        this.sfx("sparkle");
+        break;
+      case "ting": [24, 31, 36].forEach((s, k) => this.bell(L, s, t + k * 0.09, 0.07)); break;
+      case "aww": [19, 24, 28, 31].forEach((s, k) => this.bell(L, s, t + k * 0.16, 0.05)); break;
+      case "offkey": {
+        const o = this.osc("sawtooth", 330, t);
+        [[0.4, 365], [0.8, 300], [1.2, 390], [1.7, 270], [2.3, 240]].forEach(([dt, f]) => o.frequency.linearRampToValueAtTime(f, t + dt));
+        const vib = c.createOscillator(); vib.frequency.value = 7;
+        const vg = c.createGain(); vg.gain.value = 14;
+        vib.connect(vg); vg.connect(o.frequency);
+        const lp = this.filter("lowpass", 1400);
+        const e = this.env(t, 0.08, 2.1, 0.4, 0.07);
+        o.connect(lp); lp.connect(e); e.connect(out);
+        o.start(t); vib.start(t); o.stop(t + 2.8); vib.stop(t + 2.8);
+        break;
+      }
+      case "wah":
+        [[0, 293.7, 0.32], [0.38, 277.2, 0.32], [0.76, 261.6, 0.32], [1.14, 246.9, 1.1]].forEach(([dt, f, d], k) => {
+          const s = t + dt, o = this.osc("sawtooth", f, s);
+          const lp = this.filter("lowpass", 300, 6);
+          lp.frequency.setValueAtTime(300, s); lp.frequency.linearRampToValueAtTime(1300, s + 0.12); lp.frequency.linearRampToValueAtTime(400, s + d);
+          if (k === 3) {
+            const v = c.createOscillator(); v.frequency.value = 6;
+            const vg = c.createGain(); vg.gain.value = 6;
+            v.connect(vg); vg.connect(o.frequency); v.start(s); v.stop(s + d + 0.3);
+          }
+          const e = this.env(s, 0.02, d - 0.05, 0.2, 0.06);
+          o.connect(lp); lp.connect(e); e.connect(out); o.start(s); o.stop(s + d + 0.3);
+        });
+        break;
     }
   }
 };
@@ -1266,6 +1430,7 @@ function goScene(i) {
   cineClear();
   if (REDUCED) { cine.idx = i; return renderCine(); }
   const fade = $("#cineFade");
+  music.sfx("whoosh");
   fade.classList.add("on");
   cine.timers.push(setTimeout(() => { cine.idx = i; renderCine(); fade.classList.remove("on"); }, 480));
 }
@@ -1314,6 +1479,8 @@ function renderCine() {
   cineEl.dataset.mood = mood;
   cineEl.classList.toggle("letterbox", sc.type === "title" || sc.type === "hearts" || !!sc.letterbox);
   music.setMood(mood);
+  music.duck(false);
+  if (sc.sfx) later(300, () => music.sfx(sc.sfx));
   setLanterns(sc.lanterns || sc.type === "hearts" ? 14 : 0);
   fx.auto = sc.type === "wish";
   if (fx.auto) startFx();
@@ -1329,6 +1496,7 @@ function renderCine() {
         <p class="sub serif">${esc(fillNames(sc.sub))}</p>
         <div class="diya solo" style="--d:2.4s"><i class="flame"></i></div>
       </div>`;
+      later(2500, () => music.sfx("sparkle"));   // diya jalte hi
       later(7000, nextScene);
       break;
 
@@ -1348,6 +1516,7 @@ function renderCine() {
         <ul class="checklist">${items.map((it, i) =>
           `<li class="${it[1] ? "ok" : "no"}" style="animation-delay:${0.5 + i * 0.6}s"><span class="box">${it[1] ? "✅" : "❌"}</span>${esc(fillNames(it[0]))}</li>`).join("")}</ul>
         ${castHtml()}</div>`;
+      items.forEach((it, i) => later(500 + i * 600 + 150, () => music.sfx(it[1] ? "tick" : "buzz")));
       later(900 + items.length * 600, () => playLines(sc.lines || []));
       break;
     }
@@ -1362,7 +1531,9 @@ function renderCine() {
         <h2 class="cine-quote gold-text">${esc(fillNames(sc.title))}</h2>
         <p class="sub serif">${esc(fillNames(sc.sub))}</p>
       </div>`;
+      later(2900, () => music.sfx("heartbeat"));
       later(3100, () => {
+        music.sfx("sparkle");
         const h = $(".hearts .heart");
         if (h) { const r = h.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 46); }
       });
@@ -1380,7 +1551,8 @@ function renderCine() {
         <p class="sub">${esc(fillNames(sc.sub))}</p>
         <div class="diya-row">${[0, 1, 2, 3, 4].map((i) => `<div class="diya" style="--d:${0.6 + i * 0.3}s"><i class="flame"></i></div>`).join("")}</div>
       </div>`;
-      later(500, () => celebrate(4));
+      later(150, () => music.sfx("tada"));
+      later(1350, () => celebrate(4));
       later(7000, nextScene);
       break;
 
@@ -1388,6 +1560,7 @@ function renderCine() {
       const items = sc.items || [];
       html = `<div class="scene"><p class="scene-title">${esc(fillNames(sc.title))}</p><ul class="rules">${items.map((r, i) =>
         `<li style="animation-delay:${0.3 + i * 1.1}s"><span class="e">${esc(r[0])}</span><span>${esc(fillNames(r[1]))}</span></li>`).join("")}</ul></div>`;
+      items.forEach((r, i) => later(300 + i * 1100 + 100, () => music.sfx("pop")));
       later(3400 + items.length * 1100, nextScene);
       break;
     }
@@ -1395,7 +1568,8 @@ function renderCine() {
     case "go":
       html = `<div class="scene"><h1 class="gold-text">${esc(fillNames(sc.title))}</h1><p class="sub">${esc(fillNames(sc.sub))}</p>
         <button class="btn big go-btn" id="goBtn">🎶 Game shuru karo</button></div>`;
-      later(300, () => celebrate(5));
+      later(100, () => music.sfx("tada"));
+      later(1300, () => celebrate(5));
       break;
 
     case "report": {
@@ -1420,7 +1594,7 @@ function renderCine() {
         <p class="sub">${esc(fillNames(o.MESSAGE || ""))}</p>
         <div class="again"><button class="btn ghost" id="againBtn">🔁 Phir se khelo</button></div>
       </div>`;
-      later(200, () => celebrate(6));
+      later(200, () => { celebrate(6); music.sfx("sparkle"); });
       break;
     }
   }
@@ -1441,6 +1615,7 @@ function playLines(lines) {
   cine.lines = lines;
   cine.line = 0;
   if (!lines.length) return later(1500, nextScene);
+  music.duck(true);
   speak();
 }
 function speak() {
@@ -1451,7 +1626,7 @@ function speak() {
   const text = fillNames(l[2]);
   const actor = $("#actor" + who), otherActor = $("#actor" + other);
   if (!actor) return;
-  if (l[3]) music.sfx(l[3]);
+  music.sfx(l[3] || "pop");
   actor.classList.add("talking"); actor.classList.remove("quiet");
   otherActor.classList.remove("talking"); otherActor.classList.add("quiet");
   $("#bubble" + other).classList.remove("show");
