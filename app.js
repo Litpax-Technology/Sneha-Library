@@ -275,6 +275,7 @@ function renderGame() {
   $("#tonearm").classList.toggle("on", ["loading", "playing"].includes(g.phase));
   $("#reveal").classList.toggle("hidden", g.phase !== "reveal");
   $(".deck").classList.toggle("revealed", g.phase === "reveal");
+  $(".deck").classList.toggle("playing", g.phase === "playing");
 
   const cd = $("#countdown");
   if (g.phase === "ready") cd.textContent = "🎶";
@@ -901,8 +902,324 @@ function fxLoop(t) {
 }
 
 
+// ---------- Cinematic music (Web Audio se live banta hai — koi mp3 nahi, offline chalega) ----------
+const TONIC = 146.83; // D3 = Sa
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const hz = (semi) => TONIC * Math.pow(2, semi / 12);
+
+const music = {
+  ctx: null, out: null, verb: null, noise: null, layer: null, mood: null, file: null, fileFade: null,
+  on: store.get("gp_music", true),
+  enabled() { return PARTY.MUSIC !== false; },
+
+  // Browser bina click ke awaaz nahi chalne deta — isliye kisi click pe hi unlock
+  unlock() {
+    if (!this.enabled()) return;
+    if (PARTY.INTRO_MUSIC) {
+      if (!this.file) { this.file = new Audio(PARTY.INTRO_MUSIC); this.file.loop = true; this.file.volume = 0; }
+      return;
+    }
+    try {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        const c = (this.ctx = new AC());
+        this.out = c.createGain();
+        this.out.gain.value = this.on ? 0.85 : 0;
+        const comp = c.createDynamicsCompressor();
+        comp.threshold.value = -16; comp.ratio.value = 4;
+        this.out.connect(comp); comp.connect(c.destination);
+        this.verb = c.createConvolver();
+        this.verb.buffer = this.impulse(3.4);
+        const wet = c.createGain(); wet.gain.value = 0.4;
+        this.verb.connect(wet); wet.connect(this.out);
+        const nb = c.createBuffer(1, c.sampleRate, c.sampleRate);
+        const d = nb.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        this.noise = nb;
+      }
+      if (this.ctx.state === "suspended") this.ctx.resume();
+    } catch (e) { this.ctx = null; }
+  },
+  impulse(sec) {
+    const c = this.ctx, len = Math.floor(c.sampleRate * sec), b = c.createBuffer(2, len, c.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = b.getChannelData(ch);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6);
+    }
+    return b;
+  },
+
+  setMood(m) {
+    if (!this.enabled()) return;
+    if (this.file) { this.fadeFile(this.on ? 0.6 : 0, 1.5); return; }
+    if (!this.ctx || m === this.mood) return;
+    if (this.layer) this.fadeOut(this.layer, 1.6);
+    this.mood = m;
+    this.layer = MOODS[m] ? this.makeLayer(MOODS[m]) : null;
+  },
+  stop(sec = 1.5) {
+    this.mood = null;
+    if (this.file) this.fadeFile(0, sec);
+    if (this.layer) this.fadeOut(this.layer, sec);
+    this.layer = null;
+  },
+  toggle() {
+    this.on = !this.on;
+    store.set("gp_music", this.on);
+    if (this.ctx) {
+      const t = this.ctx.currentTime;
+      this.out.gain.cancelScheduledValues(t);
+      this.out.gain.setValueAtTime(this.out.gain.value, t);
+      this.out.gain.linearRampToValueAtTime(this.on ? 0.85 : 0, t + 0.4);
+    }
+    if (this.file && document.body.classList.contains("cine-mode")) this.fadeFile(this.on ? 0.6 : 0, 0.4);
+    return this.on;
+  },
+  fadeFile(to, sec) {
+    const a = this.file;
+    clearInterval(this.fileFade);
+    if (to > 0 && a.paused) a.play().catch(() => {});
+    const from = a.volume, t0 = performance.now();
+    this.fileFade = setInterval(() => {
+      const p = Math.min(1, (performance.now() - t0) / (sec * 1000));
+      a.volume = Math.max(0, Math.min(1, from + (to - from) * p));
+      if (p >= 1) { clearInterval(this.fileFade); if (to === 0) a.pause(); }
+    }, 50);
+  },
+
+  makeLayer(P) {
+    const c = this.ctx, g = c.createGain(), t = c.currentTime;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(1, t + 1.6);
+    g.connect(this.out);
+    g.connect(this.verb);
+    const L = { g, srcs: [], iv: null, i: 0 };
+    try { if (P.setup) P.setup(this, L, t + 0.05); } catch (e) {}
+    if (P.step) {
+      const ms = 60000 / P.bpm / 2; // 8th note
+      L.iv = setInterval(() => { try { P.step(this, L, L.i++, this.ctx.currentTime + 0.06); } catch (e) {} }, ms);
+    }
+    return L;
+  },
+  fadeOut(L, sec) {
+    clearInterval(L.iv);
+    const t = this.ctx.currentTime;
+    L.g.gain.cancelScheduledValues(t);
+    L.g.gain.setValueAtTime(L.g.gain.value, t);
+    L.g.gain.linearRampToValueAtTime(0.0001, t + sec);
+    setTimeout(() => {
+      L.srcs.forEach((s) => { try { s.stop(); } catch (e) {} });
+      try { L.g.disconnect(); } catch (e) {}
+    }, sec * 1000 + 300);
+  },
+
+  // --- Instruments ---
+  osc(type, f, t) { const o = this.ctx.createOscillator(); o.type = type; o.frequency.setValueAtTime(f, t); return o; },
+  env(t, a, hold, rel, peak) {
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(peak, t + a);
+    g.gain.setValueAtTime(peak, t + a + hold);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + a + hold + rel);
+    return g;
+  },
+  noiseSrc(t, dur) { const n = this.ctx.createBufferSource(); n.buffer = this.noise; n.loop = true; n.start(t); n.stop(t + dur); return n; },
+  filter(type, f, q = 1) { const b = this.ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; },
+
+  drone(L, semis, vol) {           // tanpura jaisa lagatar sur
+    const c = this.ctx, t = c.currentTime;
+    const lp = this.filter("lowpass", 650, 0.7);
+    const g = c.createGain(); g.gain.value = vol;
+    lp.connect(g); g.connect(L.g);
+    const lfo = c.createOscillator(); lfo.frequency.value = 0.09;
+    const lg = c.createGain(); lg.gain.value = 250;
+    lfo.connect(lg); lg.connect(lp.frequency); lfo.start(t); L.srcs.push(lfo);
+    semis.forEach((s) => [-5, 5].forEach((cents) => {
+      const o = this.osc("sawtooth", hz(s), t); o.detune.value = cents; o.connect(lp); o.start(t); L.srcs.push(o);
+    }));
+  },
+  pad(L, semis, t, dur, vol) {     // strings jaisa soft chord
+    const lp = this.filter("lowpass", 1600);
+    const e = this.env(t, 1.1, Math.max(0, dur - 1.1), 1.6, vol);
+    lp.connect(e); e.connect(L.g);
+    semis.forEach((s) => [-7, 7].forEach((cents) => {
+      const o = this.osc("triangle", hz(s), t); o.detune.value = cents; o.connect(lp); o.start(t); o.stop(t + dur + 1.8);
+    }));
+  },
+  pluck(L, semi, t, vol = 0.15, dec = 0.45) {   // santoor / pizzicato
+    const c = this.ctx, f = hz(semi);
+    const o = this.osc("triangle", f * 1.01, t); o.frequency.exponentialRampToValueAtTime(f, t + 0.04);
+    const o2 = this.osc("sine", f * 2, t);
+    const g2 = c.createGain(); g2.gain.value = 0.35;
+    const e = this.env(t, 0.004, 0, dec, vol);
+    o.connect(e); o2.connect(g2); g2.connect(e); e.connect(L.g);
+    o.start(t); o2.start(t); o.stop(t + dec + 0.1); o2.stop(t + dec + 0.1);
+  },
+  flute(L, semi, t, dur, vol = 0.08) {          // bansuri jaisi melody
+    const c = this.ctx, f = hz(semi);
+    const o = this.osc("sine", f, t);
+    const vib = c.createOscillator(); vib.frequency.value = 5.2;
+    const vg = c.createGain(); vg.gain.setValueAtTime(0, t); vg.gain.linearRampToValueAtTime(f * 0.012, t + 0.4);
+    vib.connect(vg); vg.connect(o.frequency);
+    const e = this.env(t, 0.14, dur, 0.5, vol);
+    o.connect(e); e.connect(L.g);
+    const bp = this.filter("bandpass", f * 2, 2);
+    const ng = this.env(t, 0.05, 0.05, 0.25, vol * 0.25);
+    this.noiseSrc(t, 0.4).connect(bp); bp.connect(ng); ng.connect(L.g);
+    const end = t + dur + 0.7;
+    o.start(t); vib.start(t); o.stop(end); vib.stop(end);
+  },
+  bell(L, semi, t, vol = 0.05) {
+    const f = hz(semi);
+    [[1, 1], [2.76, 0.35], [5.4, 0.12]].forEach(([m, a]) => {
+      const o = this.osc("sine", f * m, t);
+      const e = this.env(t, 0.003, 0, 2.6 / m + 0.4, vol * a);
+      o.connect(e); e.connect(L.g); o.start(t); o.stop(t + 3.2);
+    });
+  },
+  boom(L, t, vol = 0.5) {           // cinematic dhamaka
+    const o = this.osc("sine", 72, t); o.frequency.exponentialRampToValueAtTime(30, t + 1.4);
+    const e = this.env(t, 0.01, 0.1, 2.2, vol);
+    o.connect(e); e.connect(L.g); o.start(t); o.stop(t + 2.6);
+    const lp = this.filter("lowpass", 220);
+    const ne = this.env(t, 0.005, 0, 0.9, vol * 0.5);
+    this.noiseSrc(t, 1).connect(lp); lp.connect(ne); ne.connect(L.g);
+  },
+  drum(L, t, kind, vol = 1) {       // dhol / tabla
+    if (kind === "tin") {
+      const hp = this.filter("highpass", 6000);
+      const e = this.env(t, 0.002, 0, 0.06, 0.05 * vol);
+      this.noiseSrc(t, 0.1).connect(hp); hp.connect(e); e.connect(L.g);
+    } else if (kind === "ta") {
+      const bp = this.filter("bandpass", 2200, 1.5);
+      const e = this.env(t, 0.002, 0, 0.12, 0.09 * vol);
+      this.noiseSrc(t, 0.2).connect(bp); bp.connect(e); e.connect(L.g);
+      const o = this.osc("sine", 330, t);
+      const oe = this.env(t, 0.002, 0, 0.08, 0.06 * vol);
+      o.connect(oe); oe.connect(L.g); o.start(t); o.stop(t + 0.15);
+    } else {
+      const low = kind === "ghe";
+      const o = this.osc("sine", low ? 95 : 140, t); o.frequency.exponentialRampToValueAtTime(low ? 52 : 70, t + 0.18);
+      const e = this.env(t, 0.003, 0.02, low ? 0.5 : 0.3, 0.32 * vol);
+      o.connect(e); e.connect(L.g); o.start(t); o.stop(t + 0.7);
+      if (kind === "dha") this.drum(L, t, "ta", vol * 0.8);
+    }
+  },
+  riser(L, t, dur, vol = 0.12) {
+    const bp = this.filter("bandpass", 250, 3);
+    bp.frequency.setValueAtTime(250, t); bp.frequency.exponentialRampToValueAtTime(5000, t + dur);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + dur * 0.9); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.4);
+    this.noiseSrc(t, dur + 0.5).connect(bp); bp.connect(g); g.connect(L.g);
+  },
+
+  // Dialogue ke saath chhote sound effects
+  sfx(name) {
+    if (!this.ctx || !this.on || !this.enabled()) return;
+    const c = this.ctx, t = c.currentTime + 0.03, L = { g: this.out, srcs: [] };
+    if (name === "offkey") {
+      const o = this.osc("sawtooth", 330, t);
+      [[0.4, 365], [0.8, 300], [1.2, 390], [1.7, 270], [2.3, 240]].forEach(([dt, f]) => o.frequency.linearRampToValueAtTime(f, t + dt));
+      const vib = c.createOscillator(); vib.frequency.value = 7;
+      const vg = c.createGain(); vg.gain.value = 14;
+      vib.connect(vg); vg.connect(o.frequency);
+      const lp = this.filter("lowpass", 1400);
+      const e = this.env(t, 0.08, 2.1, 0.4, 0.07);
+      o.connect(lp); lp.connect(e); e.connect(this.out);
+      o.start(t); vib.start(t); o.stop(t + 2.8); vib.stop(t + 2.8);
+    } else if (name === "wah") {
+      [[0, 293.7, 0.32], [0.38, 277.2, 0.32], [0.76, 261.6, 0.32], [1.14, 246.9, 1.1]].forEach(([dt, f, d], k) => {
+        const s = t + dt, o = this.osc("sawtooth", f, s);
+        const lp = this.filter("lowpass", 300, 6);
+        lp.frequency.setValueAtTime(300, s); lp.frequency.linearRampToValueAtTime(1300, s + 0.12); lp.frequency.linearRampToValueAtTime(400, s + d);
+        if (k === 3) {
+          const v = c.createOscillator(); v.frequency.value = 6;
+          const vg = c.createGain(); vg.gain.value = 6;
+          v.connect(vg); vg.connect(o.frequency); v.start(s); v.stop(s + d + 0.3);
+        }
+        const e = this.env(s, 0.02, d - 0.05, 0.2, 0.06);
+        o.connect(lp); lp.connect(e); e.connect(this.out); o.start(s); o.stop(s + d + 0.3);
+      });
+    } else if (name === "ting") {
+      [24, 31, 36].forEach((s, k) => this.bell(L, s, t + k * 0.09, 0.07));
+    } else if (name === "aww") {
+      [19, 24, 28, 31].forEach((s, k) => this.bell(L, s, t + k * 0.16, 0.05));
+    }
+  }
+};
+
+// Har mood ka apna music (D major pentatonic — Sa Re Ga Pa Dha)
+const MOODS = {
+  title: {
+    bpm: 56,
+    setup(M, L, t) { M.drone(L, [-12, -5], 0.045); M.boom(L, t + 0.2, 0.6); M.riser(L, t + 0.5, 4.2); },
+    step(M, L, i, t) {
+      if (i > 3 && i % 4 === 0) M.bell(L, pick([12, 14, 16, 19, 21, 24]), t, 0.045);
+      if (i === 9) M.boom(L, t, 0.55);
+      if (i > 9 && i % 16 === 9) M.boom(L, t, 0.3);
+    }
+  },
+  funny: {
+    bpm: 112,
+    setup(M, L) { M.drone(L, [-12], 0.018); },
+    step(M, L, i, t) {
+      const s = i % 16;
+      if (s % 8 === 0) M.pluck(L, -12, t, 0.2, 0.3);
+      if (s % 8 === 4) M.pluck(L, -5, t, 0.18, 0.3);
+      if (s === 0 || s === 10) M.drum(L, t, "dha", 0.7);
+      if (s === 6 || s === 14) M.drum(L, t, "ta", 0.7);
+      if (s % 2 === 1) M.drum(L, t, "tin", 0.8);
+      const mel = [12, null, 16, 19, 16, null, 14, 12, 19, null, 21, 19, 16, 14, 12, null];
+      const n = mel[s];
+      if (n !== null && i >= 16) M.pluck(L, n, t, 0.085, 0.2);
+    }
+  },
+  love: {
+    bpm: 70,
+    setup(M, L) { M.drone(L, [-12, -5], 0.02); },
+    step(M, L, i, t) {
+      const chords = [[0, 4, 7], [-3, 0, 4], [-7, -3, 0], [-5, -1, 2]]; // D, Bm, G, A
+      const ch = chords[Math.floor(i / 8) % 4];
+      if (i % 8 === 0) M.pad(L, ch, t, (8 * 60) / 70 / 2, 0.035);
+      if (i % 2 === 0) M.pluck(L, ch[(i / 2) % 3] + 12, t, 0.035, 1.4);
+      const mel = [16, null, 14, 12, 14, null, null, null, 12, null, 9, 7, 9, null, null, null,
+                   16, 19, null, 16, 14, null, 12, null, 14, null, null, null, null, null, null, null];
+      const n = mel[i % 32];
+      if (n !== null && i >= 8) M.flute(L, n + 12, t, 0.75, 0.065);
+    }
+  },
+  celebrate: {
+    bpm: 128,
+    setup(M, L, t) { M.boom(L, t, 0.45); },
+    step(M, L, i, t) {
+      const s = i % 16;
+      if ([0, 6, 8].includes(s)) M.drum(L, t, "dha");
+      if ([3, 11, 14].includes(s)) M.drum(L, t, "ghe", 0.8);
+      if ([2, 4, 10, 12].includes(s)) M.drum(L, t, "ta", 0.8);
+      M.drum(L, t, "tin", s % 2 ? 1 : 0.5);
+      if (s === 0) M.pad(L, Math.floor(i / 16) % 2 ? [-7, -3, 0] : [0, 4, 7], t, 3.4, 0.03);
+      const mel = [12, 14, 16, 19, 21, 19, 16, 14, 12, 16, 19, 24, 21, 19, 16, null];
+      const n = mel[s];
+      if (n !== null && i >= 16) M.pluck(L, n, t, 0.07, 0.25);
+      if (s === 15 && Math.random() < 0.5) M.bell(L, pick([24, 26, 28, 31]), t, 0.04);
+    }
+  },
+  calm: {
+    bpm: 84,
+    setup(M, L) { M.drone(L, [-12, -5], 0.025); },
+    step(M, L, i, t) {
+      const arp = [0, 7, 12, 16, 19, 16, 12, 7];
+      M.pluck(L, arp[i % 8], t, 0.055, 0.9);
+      if (i % 16 === 0) M.pad(L, i % 32 ? [-7, -3, 0] : [0, 4, 7], t, 5, 0.025);
+      if (i % 8 === 4) M.drum(L, t, "tin", 0.6);
+    }
+  }
+};
+
 // ---------- Cinema: intro story + ending ----------
 const cine = { mode: "intro", scenes: [], idx: 0, timers: [], line: 0, lines: [], typeTimer: null, lineDone: null };
+const SCENE_MOOD = { title: "title", talk: "funny", checklist: "funny", hearts: "love", welcome: "celebrate", rules: "calm", go: "celebrate", report: "calm", wish: "celebrate" };
 function hostName(i) { return (PARTY.HOSTS && PARTY.HOSTS[i]) || ""; }
 function fillNames(s) {
   return String(s ?? "")
@@ -921,7 +1238,9 @@ function cineClear() {
 function openCine(mode, scenes) {
   stopAudio();
   cineClear();
+  music.unlock();
   document.body.classList.add("cine-mode");
+  $("#cineFade").classList.remove("on");
   cine.mode = mode;
   cine.scenes = scenes;
   cine.idx = 0;
@@ -934,20 +1253,43 @@ function startOutro() { openCine("outro", [{ type: "report" }, { type: "wish" }]
 function closeCine() {
   cineClear();
   fx.auto = false;
+  music.stop(1.8);
+  setLanterns(0);
   $("#cine").classList.remove("letterbox");
+  $("#cineFade").classList.remove("on");
   document.body.classList.remove("cine-mode");
   if (cine.mode === "intro") goToGameArea();
   else { state.game = null; showView("setup"); }
 }
+// Scene badalte waqt black fade (film jaisa cut)
+function goScene(i) {
+  cineClear();
+  if (REDUCED) { cine.idx = i; return renderCine(); }
+  const fade = $("#cineFade");
+  fade.classList.add("on");
+  cine.timers.push(setTimeout(() => { cine.idx = i; renderCine(); fade.classList.remove("on"); }, 480));
+}
 function nextScene() {
   if (cine.idx >= cine.scenes.length - 1) return closeCine();
-  cine.idx++;
-  renderCine();
+  goScene(cine.idx + 1);
 }
 // "Aage" button: chal rahi dialogue line ko poora karo / agli line / agla scene
 function cineAdvance() {
   if (cine.lineDone) return cine.lineDone();
   nextScene();
+}
+
+// Aasmaan mein udti kandeel (sky lanterns)
+function setLanterns(n) {
+  const box = $("#lanterns");
+  if (!n || REDUCED) { box.classList.remove("show"); return; }
+  if (box.childElementCount !== n) {
+    box.innerHTML = Array.from({ length: n }, () => {
+      const s = (0.55 + Math.random() * 0.75).toFixed(2);
+      return `<i class="lantern" style="left:${randInt(3, 95)}%;--s:${s};--dur:${randInt(14, 26)}s;--delay:-${randInt(0, 20)}s;--sway:${randInt(10, 40)}px"></i>`;
+    }).join("");
+  }
+  box.classList.add("show");
 }
 
 function castHtml() {
@@ -959,25 +1301,40 @@ function castHtml() {
       <div class="tag">${esc(hostName(i))}</div>
     </div>`).join("")}</div>`;
 }
+const HEART_SVG = `<svg class="heart" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="heartGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe08a"/><stop offset=".5" stop-color="#ff8a1f"/><stop offset="1" stop-color="#ff3d7f"/></linearGradient></defs><path fill="url(#heartGrad)" d="M12 21.2s-7.6-4.7-9.9-9.2C.4 8.6 2.4 4.6 6.3 4.6c2.3 0 3.9 1.3 5.7 3.4 1.8-2.1 3.4-3.4 5.7-3.4 3.9 0 5.9 4 4.2 7.4-2.3 4.5-9.9 9.2-9.9 9.2z"/></svg>`;
 
 function renderCine() {
   cineClear();
   const sc = cine.scenes[cine.idx];
+  if (!sc) return closeCine();
   const last = cine.idx === cine.scenes.length - 1;
   const stage = $("#cineStage");
-  $("#cine").classList.toggle("letterbox", sc.type === "title");
+  const mood = sc.mood || SCENE_MOOD[sc.type] || "calm";
+  const cineEl = $("#cine");
+  cineEl.dataset.mood = mood;
+  cineEl.classList.toggle("letterbox", sc.type === "title" || sc.type === "hearts" || !!sc.letterbox);
+  music.setMood(mood);
+  setLanterns(sc.lanterns || sc.type === "hearts" ? 14 : 0);
   fx.auto = sc.type === "wish";
   if (fx.auto) startFx();
   let html = "";
 
   switch (sc.type) {
     case "title":
-      html = `<div class="scene title-card"><div class="moon">🌙</div><h1>${esc(fillNames(sc.title))}</h1><p class="sub">${esc(fillNames(sc.sub))}</p></div>`;
-      later(5200, nextScene);
+      html = `<div class="scene title-card">
+        ${sc.kicker ? `<p class="kicker">${esc(fillNames(sc.kicker))}</p>` : ""}
+        <div class="moon-orb"></div>
+        <h1 class="gold-text">${esc(fillNames(sc.title))}</h1>
+        <div class="title-rule"></div>
+        <p class="sub serif">${esc(fillNames(sc.sub))}</p>
+        <div class="diya solo" style="--d:2.4s"><i class="flame"></i></div>
+      </div>`;
+      later(7000, nextScene);
       break;
 
     case "talk":
-      html = `<div class="scene story${sc.shake ? " shake" : ""}">
+      html = `${sc.night ? `<div class="moon-orb corner"></div>` : ""}
+        <div class="scene story${sc.shake ? " shake" : ""}">
         <div class="caption">${esc(fillNames(sc.caption))}</div>
         <div class="props">${esc(sc.props || "")}</div>
         ${castHtml()}</div>`;
@@ -995,10 +1352,31 @@ function renderCine() {
       break;
     }
 
+    case "hearts":
+      html = `<div class="scene hearts">
+        <div class="duo">
+          <div class="diya l" style="--d:.4s"><i class="flame"></i></div>
+          ${HEART_SVG}
+          <div class="diya r" style="--d:.6s"><i class="flame"></i></div>
+        </div>
+        <h2 class="cine-quote gold-text">${esc(fillNames(sc.title))}</h2>
+        <p class="sub serif">${esc(fillNames(sc.sub))}</p>
+      </div>`;
+      later(3100, () => {
+        const h = $(".hearts .heart");
+        if (h) { const r = h.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 46); }
+      });
+      later(10000, nextScene);
+      break;
+
     case "welcome":
       html = `<div class="scene welcome">
-        <div class="hosts">${[0, 1].map((i) => `<div class="actor a${i + 1}"><div class="face"><span>🙏</span></div><div class="tag">${esc(hostName(i))}</div></div>`).join("")}</div>
-        <h1>${esc(fillNames(sc.title))}</h1>
+        <div class="hosts">
+          <div class="actor a1"><div class="face"><span>🙏</span></div><div class="tag">${esc(hostName(0))}</div></div>
+          <div class="mini-heart">❤️</div>
+          <div class="actor a2"><div class="face"><span>🙏</span></div><div class="tag">${esc(hostName(1))}</div></div>
+        </div>
+        <h1 class="gold-text">${esc(fillNames(sc.title))}</h1>
         <p class="sub">${esc(fillNames(sc.sub))}</p>
         <div class="diya-row">${[0, 1, 2, 3, 4].map((i) => `<div class="diya" style="--d:${0.6 + i * 0.3}s"><i class="flame"></i></div>`).join("")}</div>
       </div>`;
@@ -1015,7 +1393,7 @@ function renderCine() {
     }
 
     case "go":
-      html = `<div class="scene"><h1>${esc(fillNames(sc.title))}</h1><p class="sub">${esc(fillNames(sc.sub))}</p>
+      html = `<div class="scene"><h1 class="gold-text">${esc(fillNames(sc.title))}</h1><p class="sub">${esc(fillNames(sc.sub))}</p>
         <button class="btn big go-btn" id="goBtn">🎶 Game shuru karo</button></div>`;
       later(300, () => celebrate(5));
       break;
@@ -1073,6 +1451,7 @@ function speak() {
   const text = fillNames(l[2]);
   const actor = $("#actor" + who), otherActor = $("#actor" + other);
   if (!actor) return;
+  if (l[3]) music.sfx(l[3]);
   actor.classList.add("talking"); actor.classList.remove("quiet");
   otherActor.classList.remove("talking"); otherActor.classList.add("quiet");
   $("#bubble" + other).classList.remove("show");
@@ -1125,6 +1504,26 @@ function countUpKpis() {
   });
 }
 
+// ---------- Splash: "Tap karke shuru karo" (isi click se music unlock hota hai) ----------
+let splashGone = false;
+function splashOpen() { return !$("#splash").classList.contains("hidden") && !splashGone; }
+function splashStart() {
+  if (splashGone) return;
+  splashGone = true;
+  music.unlock();
+  const sp = $("#splash");
+  sp.classList.add("leaving");
+  setTimeout(() => sp.classList.add("hidden"), REDUCED ? 0 : 700);
+  startIntro();
+}
+$("#splashBtn").addEventListener("click", splashStart);
+
+const muteBtn = $("#muteBtn");
+function paintMute() { muteBtn.textContent = music.on ? "🔊" : "🔇"; muteBtn.title = music.on ? "Music band karo" : "Music chalao"; }
+if (PARTY.MUSIC === false) muteBtn.classList.add("hidden");
+paintMute();
+muteBtn.addEventListener("click", () => { music.unlock(); music.toggle(); paintMute(); });
+
 $("#cineNext").addEventListener("click", () => {
   if (cine.idx === cine.scenes.length - 1) return closeCine();
   cineAdvance();
@@ -1132,6 +1531,10 @@ $("#cineNext").addEventListener("click", () => {
 $("#cineSkip").addEventListener("click", closeCine);
 document.addEventListener("keydown", (e) => {
   if (!document.body.classList.contains("cine-mode")) return;
+  if (splashOpen()) {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); splashStart(); }
+    return;
+  }
   if (e.key === "ArrowRight" || e.key === " " || e.key === "Enter") {
     e.preventDefault();
     if (cine.idx === cine.scenes.length - 1) return closeCine();
@@ -1142,6 +1545,7 @@ document.addEventListener("keydown", (e) => {
 
 // ---------- Init ----------
 $("#appName").textContent = CONFIG.APP_NAME;
+$("#splashTitle").textContent = CONFIG.APP_NAME;
 if (location.protocol === "file:") {
   setTimeout(() => toast("⚠️ YouTube mode ke liye app ko GitHub Pages ya local server se kholo", 6000), 800);
 }
@@ -1149,6 +1553,8 @@ if (location.protocol === "file:") {
   await loadLocalTracks();
   renderSetup();
   showView("setup");
-  if (PARTY.SHOW_INTRO) startIntro();
-  else document.body.classList.remove("cine-mode");
+  if (PARTY.SHOW_INTRO) {
+    $("#cine").dataset.mood = "title";
+    $("#splash").classList.remove("hidden");
+  } else document.body.classList.remove("cine-mode");
 })();
