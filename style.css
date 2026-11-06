@@ -614,3 +614,23 @@ td .acts button.on { background: rgba(255, 194, 75, 0.25); border-color: var(--s
 #localTable td .acts { display: grid; grid-template-columns: repeat(3, auto); gap: 4px; justify-content: start; }
 #localTable tr.row-hidden td { opacity: 0.45; }
 #localTable tr.row-hidden td:last-child { opacity: 1; }
+
+/* ===== Ending: Shukriya + Quotes ===== */
+.thanks .sub.serif { font-size: clamp(1.3rem, 3.6vw, 2rem); color: #ead6e6; max-width: 34ch; }
+.quotes .quote-stage { min-height: 230px; display: grid; place-items: center; margin: 4px auto 12px; max-width: 800px; padding-top: 24px; }
+.quote-card {
+  position: relative; margin: 0; padding: 30px 36px 26px; border-radius: 22px; text-align: center;
+  background: linear-gradient(160deg, rgba(255, 243, 220, 0.11), rgba(255, 243, 220, 0.03));
+  border: 1px solid rgba(255, 214, 150, 0.35); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  animation: quoteIn 0.9s cubic-bezier(.2, 1, .3, 1) both;
+}
+.quote-card.out { animation: quoteOut 0.45s ease forwards; }
+.quote-card p { margin: 0; font-family: var(--serif); font-style: italic; font-weight: 600; font-size: clamp(1.5rem, 4.4vw, 2.5rem); line-height: 1.35; color: #fff3dc; text-shadow: 0 0 24px rgba(255, 194, 75, 0.25); }
+.quote-card .qmark { position: absolute; top: -38px; left: 50%; transform: translateX(-50%); font-family: var(--serif); font-size: 6rem; line-height: 1; color: var(--sona); opacity: 0.9; }
+.quote-card cite { display: block; margin-top: 14px; font-style: normal; color: var(--muted); font-weight: 600; }
+@keyframes quoteIn { from { opacity: 0; transform: translateY(18px) scale(0.97); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes quoteOut { to { opacity: 0; transform: translateY(-14px); filter: blur(6px); } }
+.quote-dots { display: flex; gap: 8px; justify-content: center; margin-top: 6px; }
+.quote-dots i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 243, 220, 0.2); transition: all 0.3s; }
+.quote-dots i.on { background: var(--sona); width: 22px; border-radius: 6px; }
