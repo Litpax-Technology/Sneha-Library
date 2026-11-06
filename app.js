@@ -656,7 +656,10 @@ $("#localTable").addEventListener("click", async (e) => {
 // Repo mein songs/ folder ke andar mp3 daalo → link kisi bhi phone/laptop pe kholo → gaane apne aap aa jaate hain.
 // Gaane download nahi hote, zaroorat pe stream hote hain (isliye internet chahiye).
 const AUDIO_RX = /\.(mp3|m4a|aac|wav|ogg|opus|flac|webm)$/i;
-function songsFolder() { return String(CONFIG.SONGS_FOLDER || "songs").replace(/^\/+|\/+$/g, ""); }
+// Folder ka naam "songs" ho ya "Songs" — dono chalega (GitHub pe asli naam dhoondh lete hain)
+let resolvedFolder = null;
+function wantedFolder() { return String(CONFIG.SONGS_FOLDER || "songs").replace(/^\/+|\/+$/g, ""); }
+function songsFolder() { return resolvedFolder || wantedFolder(); }
 
 // Repo ka naam link se pehchano: <owner>.github.io/<repo>/
 function repoInfo() {
@@ -671,14 +674,25 @@ function repoInfo() {
 async function listServerSongs() {
   if (Array.isArray(CONFIG.SONGS) && CONFIG.SONGS.length) return CONFIG.SONGS.filter((n) => AUDIO_RX.test(n));
   // songs/list.json (optional — GitHub ke bina kisi aur hosting pe)
-  try {
-    const r = await fetch(songsFolder() + "/list.json", { cache: "no-store" });
-    if (r.ok) { const j = await r.json(); if (Array.isArray(j)) return j.filter((n) => AUDIO_RX.test(n)); }
-  } catch (e) {}
+  const w = wantedFolder();
+  const variants = [...new Set([w, w.toLowerCase(), w[0].toUpperCase() + w.slice(1).toLowerCase(), w.toUpperCase()])];
+  for (const f of variants) {
+    try {
+      const r = await fetch(f + "/list.json", { cache: "no-store" });
+      if (r.ok) { const j = await r.json(); if (Array.isArray(j)) { resolvedFolder = f; return j.filter((n) => AUDIO_RX.test(n)); } }
+    } catch (e) {}
+  }
   const ri = repoInfo();
   if (!ri) return null;
-  const r = await fetch(`https://api.github.com/repos/${ri.o}/${ri.r}/contents/${songsFolder()}`, { cache: "no-store" });
-  if (r.status === 404) return [];
+  const api = `https://api.github.com/repos/${ri.o}/${ri.r}/contents/`;
+  // Repo ke andar folder dhoondo (chhote-bade akshar ka farak nahi)
+  const root = await fetch(api, { cache: "no-store" });
+  if (!root.ok) throw new Error("github " + root.status);
+  const items = await root.json();
+  const dir = (Array.isArray(items) ? items : []).find((x) => x.type === "dir" && x.name.toLowerCase() === w.toLowerCase());
+  if (!dir) return [];
+  resolvedFolder = dir.name;
+  const r = await fetch(api + encodeURIComponent(dir.name), { cache: "no-store" });
   if (!r.ok) throw new Error("github " + r.status);
   const j = await r.json();
   return (Array.isArray(j) ? j : []).filter((x) => x.type === "file" && AUDIO_RX.test(x.name)).map((x) => x.name);
@@ -716,9 +730,11 @@ async function loadServerSongs(manual) {
   let names, fromCache = false;
   try {
     names = await listServerSongs();
-    if (names) store.set("rp_srvlist", names);
+    if (names) store.set("rp_srvlist2", { folder: songsFolder(), names });
   } catch (e) {
-    names = store.get("rp_srvlist", null);
+    const c = store.get("rp_srvlist2", null);
+    names = c ? c.names : null;
+    if (c && c.folder) resolvedFolder = c.folder;
     fromCache = true;
   }
   let added = 0, removed = 0;
@@ -727,7 +743,7 @@ async function loadServerSongs(manual) {
     const folder = songsFolder();
     for (const name of names) {
       const id = "srv:" + name;
-      const url = folder + "/" + encodeURIComponent(name);
+      const url = encodeURIComponent(folder) + "/" + encodeURIComponent(name);
       const t = trackById(id);
       if (t) { if (t.url !== url) await updateTrack(id, { url }); continue; }
       if (btn) btn.textContent = `⏳ Gaane aa rahe hain… ${added + 1}`;
@@ -1425,7 +1441,7 @@ const MOODS = {
 
 // ---------- Cinema: intro story + ending ----------
 const cine = { mode: "intro", scenes: [], idx: 0, timers: [], line: 0, lines: [], typeTimer: null, lineDone: null };
-const SCENE_MOOD = { title: "title", talk: "funny", checklist: "funny", hearts: "love", welcome: "celebrate", rules: "calm", go: "celebrate", report: "calm", wish: "celebrate" };
+const SCENE_MOOD = { title: "title", talk: "funny", checklist: "funny", hearts: "love", welcome: "celebrate", rules: "calm", go: "celebrate", report: "calm", thanks: "love", quotes: "love", wish: "celebrate" };
 function hostName(i) { return (PARTY.HOSTS && PARTY.HOSTS[i]) || ""; }
 function fillNames(s) {
   return String(s ?? "")
@@ -1455,7 +1471,8 @@ function openCine(mode, scenes) {
   renderCine();
 }
 function startIntro() { openCine("intro", PARTY.STORY); }
-function startOutro() { openCine("outro", [{ type: "report" }, { type: "wish" }]); }
+// Ending: Shukriya → Diwali quotes → Happy Diwali
+function startOutro() { openCine("outro", [{ type: "thanks", lanterns: true }, { type: "quotes", lanterns: true }, { type: "wish" }]); }
 function closeCine() {
   cineClear();
   fx.auto = false;
@@ -1628,12 +1645,40 @@ function renderCine() {
       break;
     }
 
+    case "thanks": {
+      const o = PARTY.OUTRO || {};
+      html = `<div class="scene thanks">
+        <div class="moon-orb"></div>
+        <p class="kicker">${esc(fillNames(o.THANKS_KICKER || "Aaj ki raat"))}</p>
+        <h1 class="gold-text">${esc(fillNames(o.THANKS_TITLE || "Shukriya 🙏"))}</h1>
+        <div class="title-rule"></div>
+        <p class="sub serif">${esc(fillNames(o.THANKS_TEXT || ""))}</p>
+      </div>`;
+      later(1800, () => music.sfx("aww"));
+      later(9000, nextScene);
+      break;
+    }
+
+    case "quotes": {
+      const o = PARTY.OUTRO || {};
+      const qs = o.QUOTES || [];
+      html = `<div class="scene quotes">
+        <p class="kicker">${esc(fillNames(o.QUOTES_KICKER || "Diwali ki kuch baatein"))}</p>
+        <div class="quote-stage" id="quoteStage"></div>
+        <div class="quote-dots">${qs.map(() => "<i></i>").join("")}</div>
+        <div class="diya solo" style="--d:.6s"><i class="flame"></i></div>
+      </div>`;
+      later(400, () => showQuote(0));
+      break;
+    }
+
     case "wish": {
       const o = PARTY.OUTRO || {};
       html = `<div class="scene wish">
         <div class="diya-row" style="margin:0 0 26px">${[0, 1, 2, 3, 4].map((i) => `<div class="diya" style="--d:${0.2 + i * 0.25}s"><i class="flame"></i></div>`).join("")}</div>
         <h1>${esc(fillNames(o.WISH || "Happy Diwali!"))}</h1>
         <p class="sub">${esc(fillNames(o.MESSAGE || ""))}</p>
+        ${o.FROM ? `<div class="from">${esc(fillNames(o.FROM))}</div>` : ""}
         <div class="again"><button class="btn ghost" id="againBtn">🔁 Phir se khelo</button></div>
       </div>`;
       later(200, () => { celebrate(6); music.sfx("sparkle"); });
@@ -1650,6 +1695,29 @@ function renderCine() {
   if (go) go.addEventListener("click", closeCine);
   const again = $("#againBtn");
   if (again) again.addEventListener("click", () => { closeCine(); startGame(); });
+}
+
+// Quotes ek-ek karke (Aage dabao toh agla quote)
+function showQuote(i) {
+  const qs = (PARTY.OUTRO && PARTY.OUTRO.QUOTES) || [];
+  const box = $("#quoteStage");
+  if (!box) return;
+  if (i >= qs.length) { cine.lineDone = null; return later(500, nextScene); }
+  const q = qs[i];
+  const text = Array.isArray(q) ? q[0] : q, by = Array.isArray(q) ? q[1] : "";
+  box.innerHTML = `<blockquote class="quote-card"><span class="qmark">“</span><p>${esc(fillNames(text))}</p>${by ? `<cite>— ${esc(fillNames(by))}</cite>` : ""}</blockquote>`;
+  $$(".quote-dots i").forEach((d, k) => d.classList.toggle("on", k === i));
+  music.sfx("tick");
+  const go = () => {
+    cine.lineDone = null;
+    cine.timers.forEach(clearTimeout);
+    cine.timers = [];
+    const c = box.querySelector(".quote-card");
+    if (c) c.classList.add("out");
+    later(450, () => showQuote(i + 1));
+  };
+  cine.lineDone = go;
+  later(Math.max(4500, String(text).length * 75), go);
 }
 
 // Dialogue: ek-ek line, typewriter style, bolne wale ka chehra badalta hai
