@@ -65,24 +65,122 @@ async function loadLocalTracks() {
   localTracks.sort((a, b) => a.added - b.added);
 }
 function trackById(id) { return localTracks.find((x) => x.id === id); }
+// Site ke naam / faltu shabd hatao: "(RiskyJatt.Com)", "Official Music Video", "320 Kbps" waghera
+const JUNK_SITES = /\b(?:www\.)?(?:riskyjatt|mr-?jatt|djpunjab|pagalworld|pagal-?world|djjohal|jattjugaad|pendujatt|songspk|mp3mad|wapking|djmaza|mr-?punjab|djyoungster|mp3tau|pagalfree|pagalnew|raag)\b(?:\.[a-z]{2,6})?/gi;
+function cleanName(str) {
+  return String(str || "")
+    .replace(/\.(mp3|m4a|aac|wav|ogg|opus|flac|webm)$/i, "")
+    .replace(/_/g, " ")
+    .replace(/[\[(][^\])]*[\])]/g, " ")
+    .replace(/\b(?:www\.)?[\w-]+\.(?:com|in|net|org|co|cc|io|me|info|xyz|fm|pk|live|site|online|club|biz)\b/gi, " ")
+    .replace(JUNK_SITES, " ")
+    .replace(/\b(official\s*(music\s*)?(video|audio|song)?|music\s*video|full\s*(video|song|audio)|lyrical|lyrics?|video\s*song|audio\s*song|hd|4k|\d{3}\s*kbps|mp3|download|instrumental|karaoke|ringtone)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s\-–|:,.]+|[\s\-–|:,.]+$/g, "")
+    .trim();
+}
 function parseFileName(name) {
-  let base = name.replace(/\.[^.]+$/, "").replace(/_/g, " ");
-  base = base.replace(/[\[(][^\])]*[\])]/g, " ")
-    .replace(/\b(instrumental|karaoke|official|audio|video|lyrics?|flute|piano|guitar|cover|version|hd|4k|full song|song|ringtone)\b/gi, " ")
-    .replace(/\s+/g, " ").trim();
-  const parts = base.split(/\s+[-–|]\s+/);
-  return { title: (parts[0] || base).trim(), singer: (parts[1] || "").trim(), movie: (parts[2] || "").trim() };
+  const raw = String(name || "").replace(/\.[a-z0-9]{2,5}$/i, "");
+  // "Gaana (Official Video) G.O.A.T" → bracket ke baad wala hissa = album/movie
+  let tail = "";
+  const m = raw.match(/^(.*?)\s*[\[(][^\])]*[\])]\s*(.+)$/);
+  if (m && cleanName(m[2]) && cleanName(m[2]).length <= 30) tail = cleanName(m[2]);
+  const base = cleanName(tail ? m[1] : raw);
+  const parts = base.split(/\s+[-–|]\s+/).map(cleanName).filter(Boolean);
+  let title = parts[0] || base, singer = parts[1] || "", movie = parts[2] || tail;
+  // "Diljit Dosanjh Born To Shine" → singer + gaana alag (jaane-pehchane singer ho toh)
+  if (!singer) {
+    const known = (CONFIG.PUNJABI_SINGERS || []).concat(CONFIG.OTHER_SINGERS || []);
+    const hit = known.find((k) => normTxt(title).startsWith(normTxt(k)) && normTxt(title).length > normTxt(k).length + 2);
+    if (hit) {
+      const words = hit.split(/\s+/).length;
+      singer = hit;
+      title = title.split(/\s+/).slice(words).join(" ");
+    }
+  }
+  return { title, singer, movie };
+}
+const normTxt = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+// mp3 ke andar save naam/singer/album padho (ID3 tags)
+function decodeId3Text(b) {
+  if (!b || !b.length) return "";
+  const enc = b[0], data = b.subarray(1);
+  let txt = "";
+  try {
+    if (enc === 0) txt = new TextDecoder("windows-1252").decode(data);
+    else if (enc === 1) {
+      const be = data[0] === 0xfe && data[1] === 0xff;
+      txt = new TextDecoder(be ? "utf-16be" : "utf-16le").decode(data.subarray(data[0] === 0xff || be ? 2 : 0));
+    } else if (enc === 2) txt = new TextDecoder("utf-16be").decode(data);
+    else txt = new TextDecoder("utf-8").decode(data);
+  } catch (e) { return ""; }
+  return txt.replace(/\u0000+$/, "").replace(/﻿/g, "").replace(/\u0000/g, ", ").trim();
+}
+async function readTags(file) {
+  const out = {};
+  try {
+    const head = new Uint8Array(await file.slice(0, 10).arrayBuffer());
+    if (head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) {      // "ID3"
+      const ver = head[3], flags = head[5];
+      const ss = (b, i) => ((b[i] & 0x7f) << 21) | ((b[i + 1] & 0x7f) << 14) | ((b[i + 2] & 0x7f) << 7) | (b[i + 3] & 0x7f);
+      const size = ss(head, 6);
+      const buf = new Uint8Array(await file.slice(10, 10 + Math.min(size, 4 * 1024 * 1024)).arrayBuffer());
+      const want = ver === 2 ? { TT2: "title", TP1: "artist", TP2: "artist2", TAL: "album" } : { TIT2: "title", TPE1: "artist", TPE2: "artist2", TALB: "album" };
+      let p = 0;
+      if (ver >= 3 && flags & 0x40) p = ver === 4 ? ss(buf, 0) : (((buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3]) >>> 0) + 4;
+      const hl = ver === 2 ? 6 : 10, il = ver === 2 ? 3 : 4;
+      while (p + hl <= buf.length) {
+        const id = String.fromCharCode(...buf.subarray(p, p + il));
+        if (!/^[A-Z0-9]+$/.test(id)) break;
+        const fs = ver === 2 ? (buf[p + 3] << 16) | (buf[p + 4] << 8) | buf[p + 5]
+          : ver === 4 ? ss(buf, p + 4) : (((buf[p + 4] << 24) | (buf[p + 5] << 16) | (buf[p + 6] << 8) | buf[p + 7]) >>> 0);
+        if (fs <= 0 || p + hl + fs > buf.length) break;
+        if (want[id] && !out[want[id]]) out[want[id]] = decodeId3Text(buf.subarray(p + hl, p + hl + fs));
+        p += hl + fs;
+      }
+    }
+    if (!out.title && file.size > 128) {                                  // purana ID3v1
+      const t = new Uint8Array(await file.slice(file.size - 128).arrayBuffer());
+      if (t[0] === 0x54 && t[1] === 0x41 && t[2] === 0x47) {
+        const dec = (a, b) => new TextDecoder("windows-1252").decode(t.subarray(a, b)).replace(/\u0000.*$/, "").trim();
+        out.title = dec(3, 33); out.artist = out.artist || dec(33, 63); out.album = out.album || dec(63, 93);
+      }
+    }
+  } catch (e) { /* tags na mile toh file ke naam se kaam chalega */ }
+  return out;
+}
+function guessLang(singer, title) {
+  const list = (CONFIG.PUNJABI_SINGERS || []).map(normTxt).filter(Boolean);
+  const hay = normTxt(singer + " " + title);
+  return list.some((n) => hay.includes(n)) ? "Punjabi" : "Hindi";
+}
+// File ka naam + andar ke tags milake best naam / singer / movie
+async function smartInfo(file) {
+  const p = parseFileName(file.name || "");
+  const tg = await readTags(file);
+  const singer = cleanName(tg.artist || tg.artist2 || "").replace(/\s*[\/;]\s*/g, ", ") || p.singer;
+  let title = cleanName(tg.title) || p.title;
+  // "Diljit Dosanjh Born To Shine" → "Born To Shine"
+  const firstArtist = singer.split(/,|&|\bx\b|\bft\.?|\bfeat\.?/i)[0].trim();
+  if (firstArtist && normTxt(title).startsWith(normTxt(firstArtist)) && normTxt(title) !== normTxt(firstArtist)) {
+    title = title.slice(title.toLowerCase().indexOf(firstArtist.toLowerCase()) + firstArtist.length).replace(/^[\s\-–|:,]+/, "").trim() || title;
+  }
+  let movie = cleanName(tg.album) || p.movie;
+  if (normTxt(movie) === normTxt(title) || /single/i.test(movie)) movie = "";
+  return { title: title || "Bina naam", singer, movie };
 }
 
 async function addFiles(fileList) {
   const files = [...fileList].filter((f) => (f.type || "").startsWith("audio/") || /\.(mp3|m4a|aac|wav|ogg|opus|flac|webm)$/i.test(f.name));
   if (!files.length) return toast("Isme koi audio file nahi mili");
-  const lang = $("#uploadLang").value;
+  const langPick = $("#uploadLang").value;
   let added = 0;
   for (const f of files) {
-    const p = parseFileName(f.name);
+    const p = await smartInfo(f);
+    const lang = langPick === "auto" ? guessLang(p.singer, f.name) : langPick;
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    const meta = { id, added: Date.now() + added, file: f.name, title: p.title || "Bina naam", singer: p.singer, movie: p.movie, lang, start: null, notes: null, notesKey: null, ringOk: null };
+    const meta = { id, added: Date.now() + added, file: f.name, title: p.title, singer: p.singer, movie: p.movie, lang, start: null, notes: null, notesKey: null, ringOk: null };
     try {
       await idb.put("blobs", { id, blob: f });
       await idb.put("meta", meta);
@@ -941,6 +1039,31 @@ $("#localTable").addEventListener("click", async (e) => {
     renderLocalTable();
     renderSetup();
   }
+});
+
+// Pehle se daale gaano mein file ke andar se naam / singer / movie bharo (khaali jagah hi)
+$("#fillTagsBtn").addEventListener("click", async () => {
+  if (!localTracks.length) return toast("Pehle gaane daalo");
+  const btn = $("#fillTagsBtn");
+  btn.disabled = true;
+  let changed = 0;
+  for (const t of localTracks) {
+    try {
+      const rec = await idb.get("blobs", t.id);
+      if (!rec || !rec.blob) continue;
+      const blob = rec.blob.name ? rec.blob : new File([rec.blob], t.file || "song.mp3");
+      const info = await smartInfo(blob);
+      const patch = {};
+      const cleanT = cleanName(t.title);
+      if (info.title && (cleanT !== t.title || normTxt(t.title) !== normTxt(info.title) && /\.(com|in)|official|video|jatt/i.test(t.title))) patch.title = info.title;
+      if (!t.singer && info.singer) patch.singer = info.singer;
+      if (!t.movie && info.movie) patch.movie = info.movie;
+      if (Object.keys(patch).length) { await updateTrack(t.id, patch); changed++; }
+    } catch (e) {}
+  }
+  btn.disabled = false;
+  renderLocalTable();
+  toast(changed ? `🏷 ${changed} gaano mein naam/singer bhar diye` : "Files mein aur kuch naya nahi mila", 3500);
 });
 
 // Party se pehle sab ki ringtone ek saath bana lo
