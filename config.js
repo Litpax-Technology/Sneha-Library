@@ -9,7 +9,13 @@ const CONFIG = {
   END_GAP: 12,                // "End" mein aakhri itne second chhod do (aksar fade-out hota hai)
   DEFAULT_COUNT: 15,          // ek game mein kitne gaane (10 / 15 / 20 / 0 = sab)
   REPLAY_LIMIT: 1,            // ek gaana kitni baar dobara
-  REVEAL_CLIP: 15,            // answer ke baad asli gaana kitne second bajega
+  REVEAL_CLIP: 15,
+
+  // ---- GitHub ke gaane ----
+  SONGS_FOLDER: "songs",      // repo ka folder jisme mp3 hain (index.html ke saath wala)
+  SONGS_LANG: "auto",         // GitHub gaano ki language: "auto" (singer se) | "Hindi" | "Punjabi"
+  GITHUB_REPO: "",            // khaali = link se khud pehchanega. Na chale toh likho: "username/repo-naam"
+  SONGS: [],                  // optional: GitHub API na chale toh file ke naam yahan likh do, jaise ["Excuses.mp3"]            // answer ke baad asli gaana kitne second bajega
 
   // "Language: Auto" mein in singers ke gaane Punjabi maane jayenge (naya naam jodna ho toh yahan likh do)
   PUNJABI_SINGERS: [
