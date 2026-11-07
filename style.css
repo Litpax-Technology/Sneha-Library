@@ -722,3 +722,32 @@ td .acts button.on { background: rgba(255, 194, 75, 0.25); border-color: var(--s
   .rays { width: 420px; height: 420px; margin: -210px 0 0 -210px; }
   .ghat { height: 18vh; }
 }
+
+/* ===== Finale (chhota, cinematic ending) ===== */
+.finale { position: relative; min-height: 72vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.fin-diyas { display: flex; gap: clamp(8px, 2.6vw, 26px); justify-content: center; transition: transform 1.4s cubic-bezier(.3, .8, .2, 1), opacity 1.4s; }
+.fin-d { width: clamp(38px, 7vw, 58px); height: clamp(42px, 7vw, 60px); }
+.fin-d::before { box-shadow: inset 0 4px 0 rgba(255, 220, 160, 0.4), 0 14px 26px rgba(255, 150, 50, 0.35); }
+.fin-d .flame { width: 16px; height: 30px; margin-left: -8px; }
+.fin-quote {
+  max-width: 20ch; margin: 6vh auto 0; min-height: 2.8em; text-align: center;
+  font-size: clamp(2rem, 5.6vw, 3.6rem); line-height: 1.3; color: #fff3dc; text-shadow: 0 0 30px rgba(255, 194, 75, 0.35);
+  transition: opacity 0.9s ease, filter 0.9s ease, transform 0.9s ease;
+}
+.fin-quote.out { opacity: 0; filter: blur(12px); transform: translateY(-24px) scale(1.05); }
+.fin-flash { position: fixed; inset: 0; pointer-events: none; opacity: 0; z-index: 5; background: radial-gradient(circle, rgba(255, 244, 214, 0.95), rgba(255, 200, 120, 0.45) 40%, transparent 72%); }
+.finale.boom .fin-flash { animation: finFlash 1.1s ease-out; }
+@keyframes finFlash { 0% { opacity: 0; } 12% { opacity: 1; } 100% { opacity: 0; } }
+.finale.boom .fin-diyas { transform: translateY(44vh) scale(0.7); opacity: 0.55; }
+.fin-wish { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; opacity: 0; pointer-events: none; }
+.fin-wish.show { opacity: 1; pointer-events: auto; }
+.fin-wish h1 { font-family: var(--display); font-weight: 400; margin: 0; font-size: clamp(3.4rem, 13vw, 8rem); line-height: 1.05; opacity: 0; }
+.fin-wish.show h1 { animation: bigIn 1.5s cubic-bezier(.2, 1, .3, 1) forwards, shimmer 6s linear infinite; }
+@keyframes bigIn {
+  from { opacity: 0; transform: scale(1.7); filter: blur(16px); }
+  to { opacity: 1; transform: none; filter: drop-shadow(0 0 32px rgba(255, 194, 75, 0.55)); }
+}
+.fin-wish .sub, .fin-wish .from, .fin-wish .again { opacity: 0; animation: none; }
+.fin-wish.show .sub { animation: rise 0.9s 1.1s both; color: #ead6e6; font-size: clamp(1.25rem, 3.4vw, 1.9rem); max-width: 30ch; margin: 16px auto 0; }
+.fin-wish.show .from { animation: rise 0.9s 1.6s both; }
+.fin-wish.show .again { animation: rise 0.9s 2.4s both; margin-top: 26px; }
