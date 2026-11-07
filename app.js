@@ -126,7 +126,7 @@ async function readTags(file) {
       const ss = (b, i) => ((b[i] & 0x7f) << 21) | ((b[i + 1] & 0x7f) << 14) | ((b[i + 2] & 0x7f) << 7) | (b[i + 3] & 0x7f);
       const size = ss(head, 6);
       const buf = new Uint8Array(await file.slice(10, 10 + Math.min(size, 4 * 1024 * 1024)).arrayBuffer());
-      const want = ver === 2 ? { TT2: "title", TP1: "artist", TP2: "artist2", TAL: "album" } : { TIT2: "title", TPE1: "artist", TPE2: "artist2", TALB: "album" };
+      const want = ver === 2 ? { TT2: "title", TP1: "artist", TP2: "artist2", TAL: "album", TCO: "genre" } : { TIT2: "title", TPE1: "artist", TPE2: "artist2", TALB: "album", TCON: "genre" };
       let p = 0;
       if (ver >= 3 && flags & 0x40) p = ver === 4 ? ss(buf, 0) : (((buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3]) >>> 0) + 4;
       const hl = ver === 2 ? 6 : 10, il = ver === 2 ? 3 : 4;
@@ -150,7 +150,9 @@ async function readTags(file) {
   } catch (e) { /* tags na mile toh file ke naam se kaam chalega */ }
   return out;
 }
-function guessLang(singer, title) {
+function guessLang(singer, title, genre) {
+  if (/punjabi/i.test(genre || "")) return "Punjabi";
+  if (/hindi|bollywood|filmi/i.test(genre || "")) return "Hindi";
   const list = (CONFIG.PUNJABI_SINGERS || []).map(normTxt).filter(Boolean);
   const hay = normTxt(singer + " " + title);
   return list.some((n) => hay.includes(n)) ? "Punjabi" : "Hindi";
@@ -168,7 +170,7 @@ async function smartInfo(file) {
   }
   let movie = cleanName(tg.album) || p.movie;
   if (normTxt(movie) === normTxt(title) || /single/i.test(movie)) movie = "";
-  return { title: title || "Bina naam", singer, movie };
+  return { title: title || "Bina naam", singer, movie, genre: tg.genre || "" };
 }
 
 // UVR ki Instrumental / Vocals files ki ab zaroorat nahi — galti se aa jaayein toh chhod do
@@ -184,7 +186,7 @@ async function addFiles(fileList) {
   try {
     for (const f of files) {
       const p = await smartInfo(f);
-      const lang = langPick === "auto" ? guessLang(p.singer, f.name) : langPick;
+      const lang = langPick === "auto" ? guessLang(p.singer, f.name, p.genre) : langPick;
       const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
       const meta = { id, added: Date.now() + added, file: f.name, title: p.title, singer: p.singer, movie: p.movie, lang, start: null };
       await idb.put("blobs", { id, blob: f });
@@ -749,7 +751,7 @@ async function loadServerSongs(manual) {
       if (btn) btn.textContent = `⏳ Gaane aa rahe hain… ${added + 1}`;
       let info = parseFileName(name);
       try { info = await smartInfo(new File([await fetchHead(url)], name)); } catch (e) {}
-      const lang = CONFIG.SONGS_LANG && CONFIG.SONGS_LANG !== "auto" ? CONFIG.SONGS_LANG : guessLang(info.singer, name);
+      const lang = CONFIG.SONGS_LANG && CONFIG.SONGS_LANG !== "auto" ? CONFIG.SONGS_LANG : guessLang(info.singer, name, info.genre);
       const meta = { id, src: "server", url, file: name, added: Date.now() + added, title: info.title || "Bina naam", singer: info.singer || "", movie: info.movie || "", lang, start: null, hidden: false };
       try { await idb.put("meta", meta); localTracks.push(meta); added++; } catch (e) {}
     }
@@ -1006,7 +1008,7 @@ const music = {
     } catch (e) { this.ctx = null; }
     if (!this.enabled()) return;
     // mp3 tracks pehle se load kar lo taaki scene badalte hi turant bajein
-    ["title", "funny", "love", "celebrate", "calm"].forEach((m) => this.trackFor(m));
+    ["title", "funny", "love", "celebrate", "calm", "ending"].forEach((m) => this.trackFor(m));
   },
   impulse(sec) {
     const c = this.ctx, len = Math.floor(c.sampleRate * sec), b = c.createBuffer(2, len, c.sampleRate);
@@ -1226,6 +1228,15 @@ const music = {
     e.connect(dest); o.start(t); o.stop(t + dur + 0.3);
     return o;
   },
+  piano(L, semi, t, vol = 0.08, dec = 1.8) {      // soft piano
+    const f = hz(semi);
+    [[1, 1], [2, 0.42], [3, 0.16], [4, 0.07]].forEach(([m, a]) => {
+      const o = this.osc("sine", f * m, t);
+      o.detune.value = m === 1 ? 0 : 3;
+      const e = this.env(t, 0.005, 0, dec / (m * 0.6 + 0.4), vol * a);
+      o.connect(e); e.connect(L.g); o.start(t); o.stop(t + dec + 0.3);
+    });
+  },
   cymbal(dest, t, vol = 0.09, dec = 1.6) {
     const hp = this.filter("highpass", 5500);
     const e = this.env(t, 0.003, 0, dec, vol);
@@ -1427,6 +1438,20 @@ const MOODS = {
       if (s === 15 && Math.random() < 0.5) M.bell(L, pick([24, 26, 28, 31]), t, 0.04);
     }
   },
+  // Ending: dheema piano + strings (D – A – Bm – G), cinematic aur emotional
+  ending: {
+    bpm: 66,
+    setup(M, L) { M.drone(L, [-12], 0.01); },
+    step(M, L, i, t) {
+      const prog = [[0, 4, 7], [-5, -1, 2], [-3, 0, 4], [-7, -3, 0]];
+      const bar = Math.floor(i / 16) % 4, ch = prog[bar], s = i % 16;
+      if (s === 0) { M.pad(L, ch, t, (16 * 60) / 66 / 2, 0.028); M.piano(L, ch[0] - 12, t, 0.11, 3); }
+      if (s % 2 === 0) M.piano(L, ch[[0, 1, 2, 1][(s / 2) % 4]] + 12, t, 0.04, 1.8);
+      const mel = [{ 0: 16, 6: 14, 8: 12, 12: 14 }, { 0: 14, 4: 16, 8: 14, 12: 11 }, { 0: 12, 6: 14, 8: 16, 12: 19 }, { 0: 21, 4: 19, 8: 17, 12: 14 }][bar];
+      if (i >= 64 && mel[s] != null) M.piano(L, mel[s] + 12, t, 0.075, 2.4);
+      if (s === 8 && bar === 3) M.bell(L, pick([24, 28, 31]), t, 0.03);
+    }
+  },
   calm: {
     bpm: 84,
     setup(M, L) { M.drone(L, [-12, -5], 0.025); },
@@ -1441,7 +1466,7 @@ const MOODS = {
 
 // ---------- Cinema: intro story + ending ----------
 const cine = { mode: "intro", scenes: [], idx: 0, timers: [], line: 0, lines: [], typeTimer: null, lineDone: null };
-const SCENE_MOOD = { title: "title", talk: "funny", checklist: "funny", hearts: "love", welcome: "celebrate", rules: "calm", go: "celebrate", report: "calm", thanks: "love", quotes: "love", wish: "celebrate" };
+const SCENE_MOOD = { title: "title", talk: "funny", checklist: "funny", hearts: "love", welcome: "celebrate", rules: "calm", go: "celebrate", report: "calm", thanks: "ending", quotes: "ending", wish: "ending", credits: "ending" };
 function hostName(i) { return (PARTY.HOSTS && PARTY.HOSTS[i]) || ""; }
 function fillNames(s) {
   return String(s ?? "")
@@ -1472,7 +1497,25 @@ function openCine(mode, scenes) {
 }
 function startIntro() { openCine("intro", PARTY.STORY); }
 // Ending: Shukriya → Diwali quotes → Happy Diwali
-function startOutro() { openCine("outro", [{ type: "thanks", lanterns: true }, { type: "quotes", lanterns: true }, { type: "wish" }]); }
+function startOutro() {
+  openCine("outro", [
+    { type: "thanks", lanterns: true, letterbox: true },
+    { type: "quotes", lanterns: true, letterbox: true },
+    { type: "wish" },
+    { type: "credits", lanterns: true, letterbox: true }
+  ]);
+}
+// Shabd ek-ek karke ubharte hain (blur → saaf)
+function wordsHtml(text, delay = 0, step = 0.12) {
+  return String(text).split(/\s+/).filter(Boolean)
+    .map((w, i) => `<span class="w" style="animation-delay:${(delay + i * step).toFixed(2)}s">${esc(w)}</span>`).join(" ");
+}
+// Ghat: paani pe tairte diye + chaand ka aks
+function ghatHtml(n = 9) {
+  return `<div class="ghat" aria-hidden="true"><div class="water"></div><div class="moon-reflect"></div><div class="float-diyas">${
+    Array.from({ length: n }, (_, k) => `<i style="--x:${(k * 11 + 4) % 96}%;--bob:${(2.6 + (k % 4) * 0.5).toFixed(1)}s;--drift:${18 + (k % 5) * 6}s;--dl:-${k * 2.3}s;--s:${(0.65 + ((k * 37) % 5) / 10).toFixed(2)}"><b></b></i>`).join("")
+  }</div></div>`;
+}
 function closeCine() {
   cineClear();
   fx.auto = false;
@@ -1647,22 +1690,23 @@ function renderCine() {
 
     case "thanks": {
       const o = PARTY.OUTRO || {};
-      html = `<div class="scene thanks">
+      html = `${ghatHtml()}<div class="scene thanks kenburns">
+        <div class="rays"></div>
         <div class="moon-orb"></div>
         <p class="kicker">${esc(fillNames(o.THANKS_KICKER || "Aaj ki raat"))}</p>
         <h1 class="gold-text">${esc(fillNames(o.THANKS_TITLE || "Shukriya 🙏"))}</h1>
         <div class="title-rule"></div>
-        <p class="sub serif">${esc(fillNames(o.THANKS_TEXT || ""))}</p>
+        <p class="sub serif words">${wordsHtml(fillNames(o.THANKS_TEXT || ""), 1.6, 0.16)}</p>
       </div>`;
       later(1800, () => music.sfx("aww"));
-      later(9000, nextScene);
+      later(11000, nextScene);
       break;
     }
 
     case "quotes": {
       const o = PARTY.OUTRO || {};
       const qs = o.QUOTES || [];
-      html = `<div class="scene quotes">
+      html = `${ghatHtml(7)}<div class="scene quotes">
         <p class="kicker">${esc(fillNames(o.QUOTES_KICKER || "Diwali ki kuch baatein"))}</p>
         <div class="quote-stage" id="quoteStage"></div>
         <div class="quote-dots">${qs.map(() => "<i></i>").join("")}</div>
@@ -1679,9 +1723,28 @@ function renderCine() {
         <h1>${esc(fillNames(o.WISH || "Happy Diwali!"))}</h1>
         <p class="sub">${esc(fillNames(o.MESSAGE || ""))}</p>
         ${o.FROM ? `<div class="from">${esc(fillNames(o.FROM))}</div>` : ""}
-        <div class="again"><button class="btn ghost" id="againBtn">🔁 Phir se khelo</button></div>
       </div>`;
-      later(200, () => { celebrate(6); music.sfx("sparkle"); });
+      later(200, () => { celebrate(8); music.sfx("sparkle"); });
+      later(2600, () => celebrate(6));
+      later(10000, nextScene);
+      break;
+    }
+
+    case "credits": {
+      const o = PARTY.OUTRO || {};
+      const rows = o.CREDITS || [];
+      const dur = 6 + rows.length * 1.8;
+      html = `<div class="credits-wrap"><div class="credits" style="--dur:${dur}s">
+          <p class="c-title gold-text">${esc(fillNames(o.CREDITS_TITLE || "Ek Diwali ki raat"))}</p>
+          ${rows.map((r) => `<div class="c-row"><span class="c-role">${esc(fillNames(r[0]))}</span><span class="c-name">${esc(fillNames(r[1]))}</span></div>`).join("")}
+        </div></div>
+        <div class="c-end" id="cEnd">
+          <div class="diya" style="--d:.3s"><i class="flame"></i></div>
+          <h1 class="gold-text">${esc(fillNames(o.CREDITS_END || "Shubh Deepawali"))}</h1>
+          <p class="sub serif">${esc(fillNames(o.CREDITS_SUB || ""))}</p>
+          <div class="again"><button class="btn ghost" id="againBtn">🔁 Phir se khelo</button></div>
+        </div>`;
+      later(Math.round(dur * 1000) - 800, () => { const e = $("#cEnd"); if (e) e.classList.add("show"); music.sfx("sparkle"); });
       break;
     }
   }
@@ -1705,7 +1768,7 @@ function showQuote(i) {
   if (i >= qs.length) { cine.lineDone = null; return later(500, nextScene); }
   const q = qs[i];
   const text = Array.isArray(q) ? q[0] : q, by = Array.isArray(q) ? q[1] : "";
-  box.innerHTML = `<blockquote class="quote-card"><span class="qmark">“</span><p>${esc(fillNames(text))}</p>${by ? `<cite>— ${esc(fillNames(by))}</cite>` : ""}</blockquote>`;
+  box.innerHTML = `<blockquote class="quote-card"><span class="qmark">“</span><p class="words">${wordsHtml(fillNames(text), 0.25, 0.11)}</p>${by ? `<cite>— ${esc(fillNames(by))}</cite>` : ""}</blockquote>`;
   $$(".quote-dots i").forEach((d, k) => d.classList.toggle("on", k === i));
   music.sfx("tick");
   const go = () => {
@@ -1717,7 +1780,7 @@ function showQuote(i) {
     later(450, () => showQuote(i + 1));
   };
   cine.lineDone = go;
-  later(Math.max(4500, String(text).length * 75), go);
+  later(Math.max(5500, 1200 + String(text).split(/\s+/).length * 110 + String(text).length * 55), go);
 }
 
 // Dialogue: ek-ek line, typewriter style, bolne wale ka chehra badalta hai
