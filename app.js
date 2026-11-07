@@ -1466,7 +1466,7 @@ const MOODS = {
 
 // ---------- Cinema: intro story + ending ----------
 const cine = { mode: "intro", scenes: [], idx: 0, timers: [], line: 0, lines: [], typeTimer: null, lineDone: null };
-const SCENE_MOOD = { title: "title", talk: "funny", checklist: "funny", hearts: "love", welcome: "celebrate", rules: "calm", go: "celebrate", report: "calm", thanks: "ending", quotes: "ending", wish: "ending", credits: "ending" };
+const SCENE_MOOD = { title: "title", talk: "funny", checklist: "funny", hearts: "love", welcome: "celebrate", rules: "calm", go: "celebrate", report: "calm", thanks: "ending", quotes: "ending", wish: "ending", credits: "ending", finale: "ending" };
 function hostName(i) { return (PARTY.HOSTS && PARTY.HOSTS[i]) || ""; }
 function fillNames(s) {
   return String(s ?? "")
@@ -1498,12 +1498,7 @@ function openCine(mode, scenes) {
 function startIntro() { openCine("intro", PARTY.STORY); }
 // Ending: Shukriya → Diwali quotes → Happy Diwali
 function startOutro() {
-  openCine("outro", [
-    { type: "thanks", lanterns: true, letterbox: true },
-    { type: "quotes", lanterns: true, letterbox: true },
-    { type: "wish" },
-    { type: "credits", lanterns: true, letterbox: true }
-  ]);
+  openCine("outro", [{ type: "finale", lanterns: true, letterbox: true }]);
 }
 // Shabd ek-ek karke ubharte hain (blur → saaf)
 function wordsHtml(text, delay = 0, step = 0.12) {
@@ -1730,6 +1725,56 @@ function renderCine() {
       break;
     }
 
+    // Finale: ek diya → diyon ki kataar → ek quote → chamak + fireworks + Happy Diwali
+    case "finale": {
+      const o = PARTY.OUTRO || {};
+      const n = 9, mid = (n - 1) / 2;
+      const quote = fillNames(o.QUOTE || "Ghar diyon se sajta hai, par roshan apno se hota hai.");
+      html = `<div class="scene finale" id="finale">
+        <div class="fin-flash"></div>
+        <div class="fin-diyas">${Array.from({ length: n }, (_, k) =>
+          `<div class="diya fin-d" style="--d:${(0.9 + Math.abs(k - mid) * 0.32).toFixed(2)}s"><i class="flame"></i></div>`).join("")}</div>
+        <p class="fin-quote serif words" id="finQuote"></p>
+        <div class="fin-wish" id="finWish">
+          <h1 class="gold-text">${esc(fillNames(o.WISH || "Happy Diwali!"))}</h1>
+          <p class="sub serif">${esc(fillNames(o.MESSAGE || ""))}</p>
+          ${o.FROM ? `<div class="from">${esc(fillNames(o.FROM))}</div>` : ""}
+          <div class="again"><button class="btn ghost" id="againBtn">🔁 Phir se khelo</button></div>
+        </div>
+      </div>`;
+      const words = quote.split(/\s+/).length;
+      const qAt = 2900, outAt = qAt + words * 160 + 3000;
+      let boomed = false;
+      const boom = () => {
+        if (boomed) return;
+        boomed = true;
+        cine.lineDone = null;
+        const q = $("#finQuote");
+        if (q) q.classList.add("out");
+        later(500, () => {
+          const f = $("#finale");
+          if (!f) return;
+          f.classList.add("boom");
+          $("#cine").classList.remove("letterbox");     // film ki patti khulti hai
+          music.sfx("tada");
+          celebrate(10);
+          later(1400, () => celebrate(8));
+          later(3200, () => celebrate(6));
+          $("#finWish").classList.add("show");
+        });
+      };
+      later(900, () => music.sfx("sparkle"));            // pehla diya
+      later(1500, () => music.sfx("harp"));              // diyon ki kataar
+      later(qAt, () => {
+        const q = $("#finQuote");
+        if (q) { q.innerHTML = wordsHtml(quote, 0, 0.16); q.classList.add("show"); }
+        music.sfx("aww");
+      });
+      later(outAt, boom);
+      cine.lineDone = boom;                              // "Aage" = seedha Happy Diwali
+      break;
+    }
+
     case "credits": {
       const o = PARTY.OUTRO || {};
       const rows = o.CREDITS || [];
@@ -1873,6 +1918,7 @@ paintMute();
 muteBtn.addEventListener("click", () => { music.unlock(); music.toggle(); paintMute(); });
 
 $("#cineNext").addEventListener("click", () => {
+  if (cine.lineDone) return cine.lineDone();
   if (cine.idx === cine.scenes.length - 1) return closeCine();
   cineAdvance();
 });
@@ -1885,6 +1931,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "ArrowRight" || e.key === " " || e.key === "Enter") {
     e.preventDefault();
+    if (cine.lineDone) return cine.lineDone();
     if (cine.idx === cine.scenes.length - 1) return closeCine();
     cineAdvance();
   }
