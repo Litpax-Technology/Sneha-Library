@@ -634,3 +634,91 @@ td .acts button.on { background: rgba(255, 194, 75, 0.25); border-color: var(--s
 .quote-dots { display: flex; gap: 8px; justify-content: center; margin-top: 6px; }
 .quote-dots i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 243, 220, 0.2); transition: all 0.3s; }
 .quote-dots i.on { background: var(--sona); width: 22px; border-radius: 6px; }
+
+/* ===== Cinematic ending v2 ===== */
+.cine[data-mood="ending"] { --sky: #0a0516; --glow: rgba(255, 170, 80, 0.26); --glow2: rgba(120, 90, 255, 0.16); }
+
+/* Shabd ek-ek karke ubharte hain */
+.words .w { display: inline-block; opacity: 0; filter: blur(8px); transform: translateY(8px); animation: wordIn 0.9s cubic-bezier(.2, .8, .2, 1) forwards; }
+@keyframes wordIn { to { opacity: 1; filter: blur(0); transform: none; } }
+
+/* Camera ka dheema zoom */
+.kenburns { animation: kenburns 14s ease-out both; }
+@keyframes kenburns { from { transform: scale(1.07); } to { transform: scale(1); } }
+
+/* Chaand ke peeche roshni ki kirne */
+.thanks { position: relative; }
+.rays {
+  position: absolute; left: 50%; top: 55px; width: 620px; height: 620px; margin: -310px 0 0 -310px; pointer-events: none; z-index: -1;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 220, 160, 0.10) 0 4deg, transparent 4deg 18deg);
+  -webkit-mask: radial-gradient(circle, #000 0 18%, transparent 62%); mask: radial-gradient(circle, #000 0 18%, transparent 62%);
+  animation: spin 90s linear infinite, rise 2s both;
+}
+
+/* Ghat: paani, chaand ka aks, tairte diye */
+.ghat { position: absolute; left: 0; right: 0; bottom: 0; height: 24vh; z-index: 0; pointer-events: none; overflow: hidden; }
+.ghat .water {
+  position: absolute; inset: 0;
+  background:
+    repeating-linear-gradient(180deg, rgba(255, 220, 160, 0.05) 0 1px, transparent 1px 9px),
+    linear-gradient(180deg, rgba(40, 20, 70, 0.0), rgba(18, 10, 40, 0.85) 30%, #07040f);
+  animation: ripple 6s linear infinite;
+}
+@keyframes ripple { to { background-position: 0 18px, 0 0; } }
+.ghat .moon-reflect {
+  position: absolute; left: 50%; top: 8%; width: 90px; height: 70%; margin-left: -45px; border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(255, 236, 190, 0.45), transparent 70%);
+  filter: blur(6px); animation: shimmerY 3.5s ease-in-out infinite;
+}
+@keyframes shimmerY { 50% { transform: scaleX(1.35); opacity: 0.7; } }
+.float-diyas i {
+  position: absolute; left: var(--x); top: 34%; width: calc(34px * var(--s)); height: calc(16px * var(--s));
+  animation: drift var(--drift) linear var(--dl) infinite;
+}
+.float-diyas i b {
+  position: absolute; inset: 0; border-radius: 4px 4px 30px 30px / 4px 4px 18px 18px;
+  background: linear-gradient(180deg, #e0782b, #8a3510);
+  box-shadow: 0 10px 18px rgba(255, 160, 60, 0.35);
+  animation: bob var(--bob) ease-in-out infinite;
+}
+.float-diyas i b::before {
+  content: ""; position: absolute; left: 50%; bottom: 80%; width: 9px; height: 16px; margin-left: -4.5px;
+  border-radius: 50% 50% 50% 50% / 65% 65% 35% 35%;
+  background: radial-gradient(ellipse at 50% 75%, #fff8d6 0 25%, #ffcf3f 45%, #ff8a1f 75%, transparent 76%);
+  filter: drop-shadow(0 0 10px rgba(255, 190, 60, 0.95)); animation: flicker 1.4s ease-in-out infinite;
+}
+.float-diyas i b::after {   /* paani mein aks */
+  content: ""; position: absolute; left: 10%; right: 10%; top: 120%; height: 160%;
+  background: radial-gradient(ellipse at 50% 0, rgba(255, 170, 70, 0.45), transparent 70%); filter: blur(4px);
+}
+@keyframes bob { 50% { transform: translateY(4px) rotate(2deg); } }
+@keyframes drift { from { transform: translateX(-6vw); } to { transform: translateX(6vw); } }
+.thanks, .quotes { position: relative; z-index: 1; }
+.cine-stage > .scene { position: relative; z-index: 1; }
+
+/* Quote card thoda halka (shabd khud chamakte hain) */
+.quote-card p.words { line-height: 1.45; }
+
+/* Credits roll */
+.credits-wrap {
+  position: absolute; inset: 0; overflow: hidden; z-index: 1; pointer-events: none;
+  -webkit-mask: linear-gradient(transparent, #000 18%, #000 78%, transparent); mask: linear-gradient(transparent, #000 18%, #000 78%, transparent);
+}
+.credits { position: absolute; left: 0; right: 0; top: 100%; text-align: center; animation: roll var(--dur) linear forwards; }
+@keyframes roll { to { transform: translateY(calc(-100% - 100vh)); } }
+.c-title { font-family: var(--display); font-size: clamp(2.2rem, 7vw, 3.8rem); margin: 0 0 50px; }
+.c-row { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; max-width: 640px; margin: 0 auto 26px; align-items: baseline; }
+.c-role { text-align: right; text-transform: uppercase; letter-spacing: 0.22em; font-size: clamp(0.78rem, 2vw, 0.95rem); color: var(--muted); font-weight: 600; }
+.c-name { text-align: left; font-family: var(--serif); font-style: italic; font-weight: 600; font-size: clamp(1.4rem, 4vw, 2rem); color: #fff3dc; }
+.c-end { position: relative; z-index: 2; text-align: center; opacity: 0; transform: scale(0.96); transition: opacity 1.6s ease, transform 2s ease; }
+.c-end.show { opacity: 1; transform: none; }
+.c-end h1 { font-family: var(--display); font-weight: 400; margin: 12px 0 0; font-size: clamp(2.8rem, 10vw, 5.6rem); filter: drop-shadow(0 0 26px rgba(255, 194, 75, 0.4)); }
+.c-end .sub { margin-top: 10px; color: #ead6e6; font-size: clamp(1.2rem, 3.4vw, 1.8rem); }
+.c-end .again { margin-top: 26px; }
+.c-end .diya { margin: 0 auto; }
+@media (max-width: 540px) {
+  .c-row { grid-template-columns: 1fr; gap: 2px; margin-bottom: 22px; }
+  .c-role, .c-name { text-align: center; }
+  .rays { width: 420px; height: 420px; margin: -210px 0 0 -210px; }
+  .ghat { height: 18vh; }
+}
