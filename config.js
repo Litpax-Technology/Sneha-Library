@@ -23,7 +23,8 @@ const CONFIG = {
     "Guru Randhawa", "Param Singh", "Kamal Kahlon", "Bohemia", "Jass Manak", "Ammy Virk", "B Praak", "Shubh",
     "Babbu Maan", "Gippy Grewal", "Harrdy Sandhu", "Mankirt Aulakh", "Arjan Dhillon", "Amrit Maan", "Jassie Gill",
     "Garry Sandhu", "Gurnam Bhullar", "Satinder Sartaaj", "Prem Dhillon", "R Nait", "Nirvair Pannu", "Tegi Pannu",
-    "Ninja", "Parmish Verma", "Sharry Maan", "Jordan Sandhu", "Hardy Sandhu", "Sukh-E", "Dilpreet Dhillon", "Intense"
+    "Ninja", "Parmish Verma", "Sharry Maan", "Jordan Sandhu", "Hardy Sandhu", "Sukh-E", "Dilpreet Dhillon", "Intense",
+    "Kaka", "Gulab Sidhu", "Sunanda Sharma", "Afsana Khan", "Nimrat Khaira", "Kulwinder Billa", "Navaan Sandhu", "Cheema Y"
   ],
   // Hindi singers (file ke naam mein singer chipka ho toh alag karne ke kaam aata hai)
   OTHER_SINGERS: [
@@ -50,7 +51,8 @@ const PARTY = {
     funny: "music/funny.mp3",          // halka-phulka, comedy
     love: "music/love.mp3",            // bansuri / piano, romantic
     celebrate: "music/celebrate.mp3",  // dhol, festive, Diwali vibe
-    calm: "music/calm.mp3"             // sitar / soft, rules & report ke liye
+    calm: "music/calm.mp3",            // sitar / soft, rules ke liye
+    ending: "music/ending.mp3"         // ending (Shukriya, quotes, credits) — piano/strings, emotional
   },
 
   // Optional: kisi effect ki asli mp3 ho toh yahan (e.g. rimshot: "sfx/rimshot.mp3"). Khali = live bana effect.
@@ -138,6 +140,20 @@ const PARTY = {
     ],
     WISH: "Happy Diwali!",
     MESSAGE: "Aapka ghar roshni se, mann sukoon se aur zindagi apno se bhari rahe. Naya saal nayi khushiyan laaye 🪔",
-    FROM: ""                  // chaaho toh: "— {H1} & {H2} ki taraf se ❤️"
+    FROM: "",                 // chaaho toh: "— {H1} & {H2} ki taraf se ❤️"
+
+    // Aakhir mein film jaise credits (role, naam)
+    CREDITS_TITLE: "Ek Diwali ki raat",
+    CREDITS: [
+      ["Starring", "Aap Sab ❤️"],
+      ["Hasi", "Aapki"],
+      ["Gaane", "Jo aapne pehchane"],
+      ["Roshni", "Har ek diya 🪔"],
+      ["Music", "Dil se"],
+      ["Special thanks", "Aapka aana"]
+      // hosts ka naam bhi chahiye toh upar wali line ke baad comma lagake: ["Hosted by", "{H1} & {H2}"]
+    ],
+    CREDITS_END: "Shubh Deepawali",
+    CREDITS_SUB: "Phir milenge, agli roshni pe ✨"
   }
 };
