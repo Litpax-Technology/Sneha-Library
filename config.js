@@ -125,35 +125,13 @@ const PARTY = {
     "{H2} ne toh pehli note pe pehchan liya tha 😎"
   ],
 
-  // Game khatam hone pe ending: Shukriya → Diwali quotes → Happy Diwali
+  // Game khatam hone pe ending: diye jalte hain → ek quote → fireworks + Happy Diwali
   OUTRO: {
-    THANKS_KICKER: "Aaj ki raat",
-    THANKS_TITLE: "Shukriya 🙏",
-    THANKS_TEXT: "Aap sab aaye, hase, gaaye aur pehchane — isi se ye raat itni roshan hui.",
-    QUOTES_KICKER: "Diwali ki kuch baatein",
-    QUOTES: [
-      "Diye ki lau chhoti hoti hai, par andhera kitna bhi gehra ho — jeet hamesha roshni ki hoti hai.",
-      "Ghar diyon se sajta hai, par roshan apno se hota hai.",
-      "Roshni bahar ki ho ya mann ki — baantne se hi badhti hai.",
-      "Mithai ki mithaas ek din ki, rishton ki mithaas umr bhar ki.",
-      "Is Diwali purani shikayatein jala do, aur nayi khushiyon ke diye jala lo."
-    ],
+    QUOTE: "Ghar diyon se sajta hai, par roshan apno se hota hai.",
+    // doosra quote chahiye toh upar wala badal do, jaise:
+    // "Ek diya kaafi hai andhere ko haraane ke liye — aur ek muskaan, kisi ka din roshan karne ke liye."
     WISH: "Happy Diwali!",
-    MESSAGE: "Aapka ghar roshni se, mann sukoon se aur zindagi apno se bhari rahe. Naya saal nayi khushiyan laaye 🪔",
-    FROM: "",                 // chaaho toh: "— {H1} & {H2} ki taraf se ❤️"
-
-    // Aakhir mein film jaise credits (role, naam)
-    CREDITS_TITLE: "Ek Diwali ki raat",
-    CREDITS: [
-      ["Starring", "Aap Sab ❤️"],
-      ["Hasi", "Aapki"],
-      ["Gaane", "Jo aapne pehchane"],
-      ["Roshni", "Har ek diya 🪔"],
-      ["Music", "Dil se"],
-      ["Special thanks", "Aapka aana"]
-      // hosts ka naam bhi chahiye toh upar wali line ke baad comma lagake: ["Hosted by", "{H1} & {H2}"]
-    ],
-    CREDITS_END: "Shubh Deepawali",
-    CREDITS_SUB: "Phir milenge, agli roshni pe ✨"
+    MESSAGE: "Aapka ghar roshni se, mann sukoon se aur zindagi apno se bhari rahe 🪔",
+    FROM: ""                  // chaaho toh: "— {H1} & {H2} ki taraf se ❤️"
   }
 };
